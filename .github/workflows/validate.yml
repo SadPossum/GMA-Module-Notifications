@@ -41,17 +41,12 @@ jobs:
 
       - name: Restore
         working-directory: gma-module-notifications
-        run: dotnet restore 
-Gma.Modules.Notifications.slnx
+        run: dotnet restore Gma.Modules.Notifications.slnx
 
       - name: Build
         working-directory: gma-module-notifications
-        run: dotnet build 
-Gma.Modules.Notifications.slnx
- --no-restore -m:1
+        run: dotnet build Gma.Modules.Notifications.slnx --no-restore -m:1
 
       - name: Test
         working-directory: gma-module-notifications
-        run: dotnet test 
-Gma.Modules.Notifications.slnx
- --no-build --logger "console;verbosity=minimal"
+        run: dotnet test Gma.Modules.Notifications.slnx --no-build --logger "console;verbosity=minimal"
