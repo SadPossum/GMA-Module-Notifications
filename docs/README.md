@@ -1,6 +1,6 @@
 # Notifications Module
 
-The `Notifications` module is an optional durable history/read-state module for user-facing notifications. It complements the shared SSE/SignalR live-delivery adapters; it is not a backend event bus and it is not a replacement for module integration events.
+The `Notifications` module is an optional durable history/read-state module for user-facing notifications. It complements the shared notification publisher, realtime bridge, and SSE/SignalR live-delivery adapters; it is not a backend event bus and it is not a replacement for module integration events.
 
 ## Projects
 
@@ -18,7 +18,7 @@ Gma.Modules.Notifications.AdminApi
 
 The module is not registered in the default hosts. Applications compose the user API and admin API explicitly when they need notification history.
 
-`NotificationsProfiles.Default` is selected by both `Gma.Modules.Notifications.Api` and `Gma.Modules.Notifications.AdminApi`. It provides the `notifications.history` and `notifications.broadcasts` composition features and requires tenant context. Live SSE/SignalR delivery is still host-selected through the shared notification adapters, not implied by the durable module profile.
+`NotificationsProfiles.Default` is selected by both `Gma.Modules.Notifications.Api` and `Gma.Modules.Notifications.AdminApi`. It provides the `notifications.history` and `notifications.broadcasts` composition features and requires tenant context. Live SSE/SignalR delivery is still host-selected through `Gma.Framework.Realtime.Notifications` plus the shared notification adapters, not implied by the durable module profile.
 
 ## User API
 
@@ -108,11 +108,12 @@ This pattern is explicit by design. The reusable Notifications descriptor does n
 
 ## Shared Live Adapters
 
-The older shared path still exists for best-effort live delivery:
+The shared path still exists for best-effort live delivery:
 
 - transactional commands may enqueue through `IUserNotificationRequestQueue`;
 - the optional CQRS bridge flushes after the source module unit of work commits;
 - `IUserNotificationPublisher` can store history through `IUserNotificationHistoryWriter` when the module is composed;
+- `Gma.Framework.Realtime.Notifications` bridges notification messages onto the generic in-memory realtime feed;
 - live SSE/SignalR sinks deliver only when `Notifications:Enabled=true`.
 
 Use the durable integration-event path for notifications that must survive process crashes between source commit and live publish.
@@ -128,6 +129,17 @@ using Gma.Modules.Notifications.AdminApi;
 builder.AddModule<NotificationsModule>();
 builder.AddAdminApiModule<NotificationsAdminApiModule>();
 ```
+
+Hosts that also expose best-effort live notifications compose the shared framework pieces explicitly:
+
+```csharp
+builder.AddUserNotificationsCqrs();
+builder.AddUserNotificationsRealtime();
+builder.AddUserNotificationServerSentEvents();
+builder.AddUserNotificationSignalR();
+```
+
+The module does not reference realtime, SSE, or SignalR packages directly. Those are host-level adapters around `Gma.Framework.Notifications` contracts.
 
 Run the provider-specific module migrations before starting the host. To consume NATS notification request events, the runtime host must also compose NATS consumers and the producer-specific subscription:
 
