@@ -4,6 +4,7 @@ using System.Net.ServerSentEvents;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Timeouts;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -224,7 +225,8 @@ public sealed class NotificationsModule : IModule
                     httpContext.RequestAborted));
             return stream;
         })
-            .RequireScope();
+            .RequireScope()
+            .DisableRequestTimeout();
 
         group.MapGet("/{notificationId:guid}", async (
             Guid notificationId,
@@ -338,7 +340,8 @@ public sealed class NotificationsModule : IModule
                     httpContext.RequestAborted));
             return stream;
         })
-            .RequireScope();
+            .RequireScope()
+            .DisableRequestTimeout();
     }
 
     private static Task<Result<long>> ResolveCurrentUserCursorAsync(

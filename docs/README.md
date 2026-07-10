@@ -88,6 +88,10 @@ Durable history and broadcast streams are configured through `Notifications:Dura
 
 SQL Server and PostgreSQL migrations are provider-specific and use the schema-local EF history table.
 
+`INotificationPreferenceEvaluator` is a replaceable application seam. The default stores all valid durable requests; products can replace it with a local preference projection without coupling Notifications to another module's database.
+
+`Notifications:Retention` is disabled until a product chooses policy. When enabled, a bounded hosted cleanup removes old read/unread user history and broadcasts in separate batches. Configure `ReadHistoryDays`, `UnreadHistoryDays`, `BroadcastDays`, `BatchSize`, and `IntervalMinutes`; keep unread retention at least as long as read retention. Multi-instance live delivery remains a host-level backplane concern behind the shared realtime contracts—durable history does not depend on that backplane.
+
 ## Durable Ingestion
 
 `Gma.Modules.Notifications.Contracts` owns `UserNotificationRequestedIntegrationEvent`. Producer modules that want guaranteed history creation publish that event through their own outbox and declare it in their descriptor. The physical subject remains producer-scoped:
@@ -161,6 +165,6 @@ Payload JSON is normalized and bounded to 32 KB for both direct history rows and
 
 ## Follow-Ups
 
-- Add user notification preferences and retention policies.
-- Add retention cleanup/admin operations.
+- Add product-specific preference projections/adapters where a product needs user controls beyond the default allow behavior.
+- Add delivery receipts or retention administration only for products whose support/compliance workflows require them.
 - Consider wildcard notification request subscriptions only as a shared messaging feature, not as hidden Notifications module magic.

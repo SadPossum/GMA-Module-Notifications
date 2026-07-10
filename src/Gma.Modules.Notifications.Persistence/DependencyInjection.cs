@@ -1,5 +1,6 @@
 namespace Gma.Modules.Notifications.Persistence;
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -10,6 +11,7 @@ using Gma.Framework.Cqrs.UnitOfWork;
 using Gma.Framework.Messaging;
 using Gma.Framework.Notifications;
 using Gma.Framework.Persistence.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 public static class DependencyInjection
 {
@@ -18,6 +20,25 @@ public static class DependencyInjection
         ArgumentNullException.ThrowIfNull(builder);
 
         builder.Services.AddPersistenceOptions(builder.Configuration);
+        NotificationRetentionOptions retentionOptions = builder.Configuration
+            .GetSection(NotificationRetentionOptions.SectionName)
+            .Get<NotificationRetentionOptions>() ?? new();
+        ValidateOptionsResult retentionValidation = new NotificationRetentionOptionsValidator()
+            .Validate(name: null, retentionOptions);
+        if (retentionValidation.Failed)
+        {
+            throw new OptionsValidationException(
+                NotificationRetentionOptions.SectionName,
+                typeof(NotificationRetentionOptions),
+                retentionValidation.Failures);
+        }
+
+        builder.Services
+            .AddOptions<NotificationRetentionOptions>()
+            .Bind(builder.Configuration.GetSection(NotificationRetentionOptions.SectionName))
+            .ValidateOnStart();
+        builder.Services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IValidateOptions<NotificationRetentionOptions>, NotificationRetentionOptionsValidator>());
 
         builder.Services.TryAddModuleDbContext<NotificationsDbContext>(options =>
             options.UseConfiguredProvider(
@@ -34,6 +55,11 @@ public static class DependencyInjection
             ServiceDescriptor.Scoped<IInboxStore, NotificationsInboxStore>(),
             ServiceDescriptor.Scoped<IUserNotificationHistoryWriter, NotificationHistoryWriter>()
         ]);
+        if (retentionOptions.Enabled)
+        {
+            builder.Services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IHostedService, NotificationRetentionService>());
+        }
 
         return builder;
     }

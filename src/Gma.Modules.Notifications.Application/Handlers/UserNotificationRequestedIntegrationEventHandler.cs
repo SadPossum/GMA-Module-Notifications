@@ -12,6 +12,7 @@ using DomainNotificationSeverity = Gma.Modules.Notifications.Domain.ValueObjects
 [IntegrationEventHandler("user-notification-request", RequiresExplicitProducerBinding = true)]
 internal sealed class UserNotificationRequestedIntegrationEventHandler(
     INotificationHistoryRepository repository,
+    INotificationPreferenceEvaluator preferenceEvaluator,
     ISystemClock clock)
     : IIntegrationEventHandler<UserNotificationRequestedIntegrationEvent>
 {
@@ -20,6 +21,21 @@ internal sealed class UserNotificationRequestedIntegrationEventHandler(
         CancellationToken cancellationToken)
     {
         if (await repository.ExistsAsync(integrationEvent.EventId, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        bool shouldStore = await preferenceEvaluator.ShouldStoreAsync(
+                new NotificationPreferenceRequest(
+                    integrationEvent.ScopeId,
+                    integrationEvent.UserId,
+                    integrationEvent.SourceModule,
+                    integrationEvent.NotificationName,
+                    integrationEvent.NotificationVersion,
+                    integrationEvent.Severity),
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (!shouldStore)
         {
             return;
         }

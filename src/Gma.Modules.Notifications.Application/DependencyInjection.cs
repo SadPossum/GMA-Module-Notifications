@@ -8,6 +8,7 @@ using Gma.Modules.Notifications.Application.Handlers;
 using Gma.Modules.Notifications.Contracts;
 using Gma.Framework.Application.Composition;
 using Gma.Framework.Messaging;
+using Gma.Modules.Notifications.Application.Ports;
 
 public static class DependencyInjection
 {
@@ -39,6 +40,7 @@ public static class DependencyInjection
         }
 
         services.AddApplicationServicesFromAssembly(typeof(DependencyInjection).Assembly);
+        services.TryAddSingleton<INotificationPreferenceEvaluator, AllowAllNotificationPreferenceEvaluator>();
 
         return services;
     }
