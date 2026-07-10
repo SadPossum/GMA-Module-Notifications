@@ -16,14 +16,14 @@ internal sealed class ListNotificationHistoryQueryHandler(
         ListNotificationHistoryQuery query,
         CancellationToken cancellationToken)
     {
-        if (!NotificationHistoryAccess.CanAccessUserHistory(query.Subject, query.Subject.TenantId))
+        if (!NotificationHistoryAccess.CanAccessUserHistory(query.Subject))
         {
             return Result.Failure<NotificationHistoryListResponse>(NotificationsApplicationErrors.AccessDenied);
         }
 
         PageRequest pageRequest = PageRequest.Normalize(query.Page, query.PageSize);
         NotificationHistoryListResponse response = await repository
-            .ListAsync(query.Subject, query.UnreadOnly, pageRequest, cancellationToken)
+            .ListAsync(query.Subject, query.ScopeId, query.UnreadOnly, pageRequest, cancellationToken)
             .ConfigureAwait(false);
 
         return Result.Success(response);

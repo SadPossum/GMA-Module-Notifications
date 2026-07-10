@@ -4,7 +4,7 @@ using System.Text.Json;
 
 public sealed record AdminNotificationHistoryItem(
     Guid NotificationId,
-    string TenantId,
+    string ScopeId,
     string UserId,
     string Module,
     string Name,

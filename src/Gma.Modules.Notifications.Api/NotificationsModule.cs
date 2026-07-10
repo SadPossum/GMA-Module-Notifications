@@ -17,13 +17,13 @@ using Gma.Framework.AccessControl;
 using Gma.Framework.Api.Modules;
 using Gma.Framework.Api.Observability;
 using Gma.Framework.Api.Results;
-using Gma.Framework.Api.Tenancy;
+using Gma.Framework.Api.Scoping;
 using Gma.Framework.Cqrs;
 using Gma.Framework.ModuleComposition;
 using Gma.Framework.Naming;
+using Gma.Framework.Scoping;
 using Gma.Framework.Results;
 using Gma.Framework.Security;
-using Gma.Framework.Tenancy;
 
 public sealed class NotificationsModule : IModule
 {
@@ -48,11 +48,11 @@ public sealed class NotificationsModule : IModule
             int? pageSize,
             bool? unreadOnly,
             HttpContext httpContext,
-            ITenantContext tenantContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, tenantContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -60,6 +60,7 @@ public sealed class NotificationsModule : IModule
             Result<NotificationHistoryListResponse> result = await dispatcher.QueryAsync(
                 new ListNotificationHistoryQuery(
                     subject,
+                    CurrentScopeId(scopeContext),
                     unreadOnly ?? false,
                     page ?? Gma.Framework.Pagination.PageRequest.DefaultPage,
                     pageSize ?? Gma.Framework.Pagination.PageRequest.DefaultPageSize),
@@ -67,25 +68,25 @@ public sealed class NotificationsModule : IModule
 
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireTenant();
+            .RequireScope();
 
         group.MapGet("/broadcasts", async (
             int? page,
             int? pageSize,
             bool? unreadOnly,
             HttpContext httpContext,
-            ITenantContext tenantContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, tenantContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
 
             Result<NotificationBroadcastListResponse> result = await dispatcher.QueryAsync(
                 new ListNotificationBroadcastsQuery(
-                    CurrentTenantId(tenantContext),
+                    CurrentScopeId(scopeContext),
                     NotificationBroadcastRecipientKind.User,
                     subject.Id,
                     unreadOnly ?? false,
@@ -95,16 +96,16 @@ public sealed class NotificationsModule : IModule
 
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireTenant();
+            .RequireScope();
 
         group.MapGet("/broadcasts/{broadcastId:guid}", async (
             Guid broadcastId,
             HttpContext httpContext,
-            ITenantContext tenantContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, tenantContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -112,23 +113,23 @@ public sealed class NotificationsModule : IModule
             Result<NotificationBroadcastItem> result = await dispatcher.QueryAsync(
                 new GetNotificationBroadcastQuery(
                     broadcastId,
-                    CurrentTenantId(tenantContext),
+                    CurrentScopeId(scopeContext),
                     NotificationBroadcastRecipientKind.User,
                     subject.Id),
                 cancellationToken).ConfigureAwait(false);
 
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireTenant();
+            .RequireScope();
 
         group.MapPost("/broadcasts/{broadcastId:guid}/read", async (
             Guid broadcastId,
             HttpContext httpContext,
-            ITenantContext tenantContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, tenantContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -136,47 +137,47 @@ public sealed class NotificationsModule : IModule
             Result<Unit> result = await dispatcher.SendAsync(
                 new MarkNotificationBroadcastReadCommand(
                     broadcastId,
-                    CurrentTenantId(tenantContext),
+                    CurrentScopeId(scopeContext),
                     NotificationBroadcastRecipientKind.User,
                     subject.Id),
                 cancellationToken).ConfigureAwait(false);
 
             return result.IsSuccess ? Results.NoContent() : result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireTenant();
+            .RequireScope();
 
         group.MapPost("/broadcasts/read-all", async (
             HttpContext httpContext,
-            ITenantContext tenantContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, tenantContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
 
             Result<MarkAllNotificationBroadcastsReadResponse> result = await dispatcher.SendAsync(
                 new MarkAllNotificationBroadcastsReadCommand(
-                    CurrentTenantId(tenantContext),
+                    CurrentScopeId(scopeContext),
                     NotificationBroadcastRecipientKind.User,
                     subject.Id),
                 cancellationToken).ConfigureAwait(false);
 
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireTenant();
+            .RequireScope();
 
         group.MapGet("/broadcasts/stream", async (
             long? afterSequence,
             HttpContext httpContext,
-            ITenantContext tenantContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             ILogger<NotificationsModule> logger,
             IOptions<NotificationStreamOptions> streamOptions,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, tenantContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -189,7 +190,7 @@ public sealed class NotificationsModule : IModule
                     statusCode: StatusCodes.Status400BadRequest);
             }
 
-            string? tenantId = CurrentTenantId(tenantContext);
+            string? scopeId = CurrentScopeId(scopeContext);
             long cursor;
             if (afterSequence.HasValue)
             {
@@ -199,7 +200,7 @@ public sealed class NotificationsModule : IModule
             {
                 Result<long> cursorResult = await ResolveCurrentBroadcastCursorAsync(
                     dispatcher,
-                        tenantId,
+                        scopeId,
                         NotificationBroadcastRecipientKind.User,
                         subject.Id,
                         cancellationToken).ConfigureAwait(false);
@@ -214,7 +215,7 @@ public sealed class NotificationsModule : IModule
             IResult stream = TypedResults.ServerSentEvents(
                 StreamBroadcastsAsync(
                     dispatcher,
-                    tenantId,
+                    scopeId,
                     NotificationBroadcastRecipientKind.User,
                     subject.Id,
                     cursor,
@@ -223,77 +224,77 @@ public sealed class NotificationsModule : IModule
                     httpContext.RequestAborted));
             return stream;
         })
-            .RequireTenant();
+            .RequireScope();
 
         group.MapGet("/{notificationId:guid}", async (
             Guid notificationId,
             HttpContext httpContext,
-            ITenantContext tenantContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, tenantContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
 
             Result<NotificationHistoryItem> result = await dispatcher.QueryAsync(
-                new GetNotificationHistoryItemQuery(notificationId, subject),
+                new GetNotificationHistoryItemQuery(notificationId, subject, CurrentScopeId(scopeContext)),
                 cancellationToken).ConfigureAwait(false);
 
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireTenant();
+            .RequireScope();
 
         group.MapPost("/{notificationId:guid}/read", async (
             Guid notificationId,
             HttpContext httpContext,
-            ITenantContext tenantContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, tenantContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
 
             Result<Unit> result = await dispatcher.SendAsync(
-                new MarkNotificationReadCommand(notificationId, subject),
+                new MarkNotificationReadCommand(notificationId, subject, CurrentScopeId(scopeContext)),
                 cancellationToken).ConfigureAwait(false);
 
             return result.IsSuccess ? Results.NoContent() : result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireTenant();
+            .RequireScope();
 
         group.MapPost("/read-all", async (
             HttpContext httpContext,
-            ITenantContext tenantContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, tenantContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
 
             Result<MarkAllNotificationsReadResponse> result = await dispatcher.SendAsync(
-                new MarkAllNotificationsReadCommand(subject),
+                new MarkAllNotificationsReadCommand(subject, CurrentScopeId(scopeContext)),
                 cancellationToken).ConfigureAwait(false);
 
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireTenant();
+            .RequireScope();
 
         group.MapGet("/history/stream", async (
             long? afterSequence,
             HttpContext httpContext,
-            ITenantContext tenantContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             ILogger<NotificationsModule> logger,
             IOptions<NotificationStreamOptions> streamOptions,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, tenantContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -316,6 +317,7 @@ public sealed class NotificationsModule : IModule
                 Result<long> cursorResult = await ResolveCurrentUserCursorAsync(
                     dispatcher,
                     subject,
+                    CurrentScopeId(scopeContext),
                     cancellationToken).ConfigureAwait(false);
                 if (cursorResult.IsFailure)
                 {
@@ -329,36 +331,39 @@ public sealed class NotificationsModule : IModule
                 StreamUserHistoryAsync(
                     dispatcher,
                     subject,
+                    CurrentScopeId(scopeContext),
                     cursor,
                     streamOptions.Value,
                     logger,
                     httpContext.RequestAborted));
             return stream;
         })
-            .RequireTenant();
+            .RequireScope();
     }
 
     private static Task<Result<long>> ResolveCurrentUserCursorAsync(
         IRequestDispatcher dispatcher,
         AccessSubject subject,
+        string? scopeId,
         CancellationToken cancellationToken) =>
         dispatcher.QueryAsync(
-            new GetNotificationStreamCursorQuery(subject),
+            new GetNotificationStreamCursorQuery(subject, scopeId),
             cancellationToken);
 
     private static Task<Result<long>> ResolveCurrentBroadcastCursorAsync(
         IRequestDispatcher dispatcher,
-        string? tenantId,
+        string? scopeId,
         NotificationBroadcastRecipientKind recipientKind,
         string recipientId,
         CancellationToken cancellationToken) =>
         dispatcher.QueryAsync(
-            new GetNotificationBroadcastStreamCursorQuery(tenantId, recipientKind, recipientId),
+            new GetNotificationBroadcastStreamCursorQuery(scopeId, recipientKind, recipientId),
             cancellationToken);
 
     private static async IAsyncEnumerable<SseItem<NotificationHistoryItem>> StreamUserHistoryAsync(
         IRequestDispatcher dispatcher,
         AccessSubject subject,
+        string? scopeId,
         long initialCursor,
         NotificationStreamOptions options,
         ILogger logger,
@@ -370,7 +375,7 @@ public sealed class NotificationsModule : IModule
         while (!cancellationToken.IsCancellationRequested)
         {
             Result<IReadOnlyList<NotificationHistoryItem>> result = await dispatcher.QueryAsync(
-                new StreamNotificationHistoryQuery(subject, afterSequence, options.BatchSize),
+                new StreamNotificationHistoryQuery(subject, scopeId, afterSequence, options.BatchSize),
                 cancellationToken).ConfigureAwait(false);
 
             if (result.IsFailure)
@@ -394,7 +399,7 @@ public sealed class NotificationsModule : IModule
 
     private static async IAsyncEnumerable<SseItem<NotificationBroadcastItem>> StreamBroadcastsAsync(
         IRequestDispatcher dispatcher,
-        string? tenantId,
+        string? scopeId,
         NotificationBroadcastRecipientKind recipientKind,
         string recipientId,
         long initialCursor,
@@ -409,7 +414,7 @@ public sealed class NotificationsModule : IModule
         {
             Result<IReadOnlyList<NotificationBroadcastItem>> result = await dispatcher.QueryAsync(
                 new StreamNotificationBroadcastsQuery(
-                    tenantId,
+                    scopeId,
                     recipientKind,
                     recipientId,
                     afterSequence,
@@ -437,7 +442,7 @@ public sealed class NotificationsModule : IModule
 
     private static bool TryResolveUserContext(
         HttpContext httpContext,
-        ITenantContext tenantContext,
+        IScopeContext scopeContext,
         out AccessSubject subject,
         out IResult? failure)
     {
@@ -452,19 +457,18 @@ public sealed class NotificationsModule : IModule
             return false;
         }
 
-        if (tenantContext.IsEnabled)
+        if (scopeContext.IsEnabled)
         {
-            string? tokenTenantId = httpContext.User.FindFirstValue(ApplicationClaimNames.TenantId);
-            if (!TenantIds.TryNormalize(tokenTenantId, out string? normalizedTokenTenantId) ||
-                !string.Equals(normalizedTokenTenantId, tenantContext.TenantId, StringComparison.Ordinal))
+            string? tokenScopeId = httpContext.User.FindFirstValue(ApplicationClaimNames.ScopeId);
+            if (!ScopeIds.TryNormalize(tokenScopeId, out string? normalizedTokenScopeId) ||
+                !string.Equals(normalizedTokenScopeId, scopeContext.ScopeId, StringComparison.Ordinal))
             {
                 failure = Results.Forbid();
                 return false;
             }
         }
 
-        string? tenantId = CurrentTenantId(tenantContext);
-        if (!AccessSubject.TryCreate(AccessSubjectKind.User, normalizedUserId, tenantId, out AccessSubject? resolvedSubject))
+        if (!AccessSubject.TryCreate(AccessSubjectKind.User, normalizedUserId, out AccessSubject? resolvedSubject))
         {
             failure = Results.Unauthorized();
             return false;
@@ -474,8 +478,8 @@ public sealed class NotificationsModule : IModule
         return true;
     }
 
-    private static string? CurrentTenantId(ITenantContext tenantContext) =>
-        tenantContext.TenantId;
+    private static string? CurrentScopeId(IScopeContext scopeContext) =>
+        scopeContext.ScopeId;
 
     private static void LogStreamQueryFailure(ILogger logger, string streamName, Error error)
     {

@@ -11,18 +11,18 @@ using DomainRecipientKind = Gma.Modules.Notifications.Domain.ValueObjects.Notifi
 public sealed record NotificationBroadcastRecipientContext
 {
     private NotificationBroadcastRecipientContext(
-        string? tenantId,
+        string? scopeId,
         DomainRecipientKind recipientKind,
         NotificationRecipient recipient,
         string recipientScope)
     {
-        this.TenantId = tenantId;
+        this.ScopeId = scopeId;
         this.RecipientKind = recipientKind;
         this.Recipient = recipient;
         this.RecipientScope = recipientScope;
     }
 
-    public string? TenantId { get; }
+    public string? ScopeId { get; }
     public DomainRecipientKind RecipientKind { get; }
     public NotificationRecipient Recipient { get; }
     public string RecipientId => this.Recipient.UserId;
@@ -30,14 +30,14 @@ public sealed record NotificationBroadcastRecipientContext
     public string RecipientScope { get; }
 
     public static Result<NotificationBroadcastRecipientContext> Create(
-        string? tenantId,
+        string? scopeId,
         ContractRecipientKind recipientKind,
         string recipientId)
     {
-        string? normalizedTenantId = null;
-        if (!string.IsNullOrWhiteSpace(tenantId))
+        string? normalizedScopeId = null;
+        if (!string.IsNullOrWhiteSpace(scopeId))
         {
-            if (!TenantIds.TryNormalize(tenantId, out normalizedTenantId))
+            if (!ScopeIds.TryNormalize(scopeId, out normalizedScopeId))
             {
                 return Result.Failure<NotificationBroadcastRecipientContext>(NotificationsDomainErrors.TenantInvalid);
             }
@@ -56,11 +56,11 @@ public sealed record NotificationBroadcastRecipientContext
             return Result.Failure<NotificationBroadcastRecipientContext>(normalizedRecipient.Error);
         }
 
-        Result<string> recipientScope = NotificationBroadcastRead.CreateRecipientScope(normalizedTenantId);
+        Result<string> recipientScope = NotificationBroadcastRead.CreateRecipientScope(normalizedScopeId);
         return recipientScope.IsFailure
             ? Result.Failure<NotificationBroadcastRecipientContext>(recipientScope.Error)
             : Result.Success(new NotificationBroadcastRecipientContext(
-                normalizedTenantId,
+                normalizedScopeId,
                 normalizedRecipientKind,
                 normalizedRecipient.Value,
                 recipientScope.Value));

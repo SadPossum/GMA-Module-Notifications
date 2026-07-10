@@ -8,7 +8,7 @@ internal sealed class GetNotificationBroadcastStreamCursorQueryValidator
 {
     public IEnumerable<string> Validate(GetNotificationBroadcastStreamCursorQuery query)
     {
-        foreach (string failure in NotificationBroadcastValidation.ValidateTenantId(query.TenantId))
+        foreach (string failure in NotificationBroadcastValidation.ValidateScopeId(query.ScopeId))
         {
             yield return failure;
         }

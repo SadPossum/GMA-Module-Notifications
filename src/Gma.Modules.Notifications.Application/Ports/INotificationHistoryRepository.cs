@@ -12,6 +12,7 @@ public interface INotificationHistoryRepository
     Task<NotificationHistoryItem?> GetAsync(
         Guid notificationId,
         AccessSubject subject,
+        string? scopeId,
         CancellationToken cancellationToken);
 
     Task<AdminNotificationHistoryItem?> GetTenantAsync(
@@ -20,6 +21,7 @@ public interface INotificationHistoryRepository
 
     Task<NotificationHistoryListResponse> ListAsync(
         AccessSubject subject,
+        string? scopeId,
         bool unreadOnly,
         PageRequest pageRequest,
         CancellationToken cancellationToken);
@@ -32,6 +34,7 @@ public interface INotificationHistoryRepository
 
     Task<long> GetCurrentStreamSequenceForUserAsync(
         AccessSubject subject,
+        string? scopeId,
         CancellationToken cancellationToken);
 
     Task<long> GetCurrentStreamSequenceForTenantAsync(
@@ -40,6 +43,7 @@ public interface INotificationHistoryRepository
 
     Task<IReadOnlyList<NotificationHistoryItem>> ListNewForUserAsync(
         AccessSubject subject,
+        string? scopeId,
         long afterStreamSequence,
         int batchSize,
         CancellationToken cancellationToken);
@@ -53,11 +57,13 @@ public interface INotificationHistoryRepository
     Task<bool> MarkReadAsync(
         Guid notificationId,
         AccessSubject subject,
+        string? scopeId,
         DateTimeOffset readAtUtc,
         CancellationToken cancellationToken);
 
     Task<int> MarkAllReadAsync(
         AccessSubject subject,
+        string? scopeId,
         DateTimeOffset readAtUtc,
         CancellationToken cancellationToken);
 

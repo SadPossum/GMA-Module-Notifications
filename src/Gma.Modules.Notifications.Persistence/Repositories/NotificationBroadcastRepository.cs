@@ -240,15 +240,15 @@ internal sealed class NotificationBroadcastRepository(NotificationsDbContext dbC
     }
 
     public async Task<AdminNotificationBroadcastListResponse> ListTenantBroadcastsAsync(
-        string tenantId,
+        string scopeId,
         PageRequest pageRequest,
         CancellationToken cancellationToken)
     {
-        string normalizedTenantId = TenantIds.Normalize(tenantId);
+        string normalizedScopeId = ScopeIds.Normalize(scopeId);
         IQueryable<NotificationBroadcast> broadcasts = dbContext.NotificationBroadcasts
             .AsNoTracking()
             .Where(broadcast =>
-                broadcast.TenantId == normalizedTenantId &&
+                broadcast.ScopeId == normalizedScopeId &&
                 (broadcast.Audience == TenantUsersAudience ||
                  broadcast.Audience == TenantAdminsAudience));
 
@@ -262,7 +262,7 @@ internal sealed class NotificationBroadcastRepository(NotificationsDbContext dbC
         IQueryable<NotificationBroadcast> broadcasts = dbContext.NotificationBroadcasts
             .AsNoTracking()
             .Where(broadcast =>
-                broadcast.TenantId == null &&
+                broadcast.ScopeId == null &&
                 (broadcast.Audience == PlatformUsersAudience ||
                  broadcast.Audience == PlatformAdminsAudience));
 
@@ -355,7 +355,7 @@ internal sealed class NotificationBroadcastRepository(NotificationsDbContext dbC
         NotificationBroadcastRead readReceipt = NotificationBroadcastRead.Create(
             readId,
             broadcastId,
-            recipient.TenantId,
+            recipient.ScopeId,
             recipient.RecipientKind,
             recipientId,
             readAtUtc).Value;
@@ -372,11 +372,11 @@ internal sealed class NotificationBroadcastRepository(NotificationsDbContext dbC
             _ when recipient.RecipientKind == UserRecipientKind => broadcasts.Where(broadcast =>
                 broadcast.Audience == PlatformUsersAudience ||
                 (broadcast.Audience == TenantUsersAudience &&
-                 broadcast.TenantId == recipient.TenantId)),
+                 broadcast.ScopeId == recipient.ScopeId)),
             _ when recipient.RecipientKind == AdminRecipientKind => broadcasts.Where(broadcast =>
                 broadcast.Audience == PlatformAdminsAudience ||
                 (broadcast.Audience == TenantAdminsAudience &&
-                 broadcast.TenantId == recipient.TenantId)),
+                 broadcast.ScopeId == recipient.ScopeId)),
             _ => broadcasts.Where(_ => false)
         };
     }
@@ -386,7 +386,7 @@ internal sealed class NotificationBroadcastRepository(NotificationsDbContext dbC
         using JsonDocument document = JsonDocument.Parse(broadcast.Payload.Json);
         return new NotificationBroadcastItem(
             broadcast.Id,
-            broadcast.TenantId,
+            broadcast.ScopeId,
             ToContractAudience(broadcast.Audience),
             broadcast.Source.Module,
             broadcast.Source.Name,
@@ -406,7 +406,7 @@ internal sealed class NotificationBroadcastRepository(NotificationsDbContext dbC
         using JsonDocument document = JsonDocument.Parse(broadcast.Payload.Json);
         return new AdminNotificationBroadcastItem(
             broadcast.Id,
-            broadcast.TenantId,
+            broadcast.ScopeId,
             ToContractAudience(broadcast.Audience),
             broadcast.Source.Module,
             broadcast.Source.Name,

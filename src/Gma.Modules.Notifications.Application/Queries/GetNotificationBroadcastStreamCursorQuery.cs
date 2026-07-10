@@ -4,6 +4,6 @@ using Gma.Modules.Notifications.Contracts;
 using Gma.Framework.Cqrs;
 
 public sealed record GetNotificationBroadcastStreamCursorQuery(
-    string? TenantId,
+    string? ScopeId,
     NotificationBroadcastRecipientKind RecipientKind,
     string RecipientId) : IQuery<long>;

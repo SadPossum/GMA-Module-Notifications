@@ -25,7 +25,7 @@ public sealed class UserNotificationRequestedIntegrationEventTests
             NotificationSeverity.Success,
             "{ \"sku\": \"SKU-1\" }");
 
-        Assert.Equal("tenant-a", integrationEvent.TenantId);
+        Assert.Equal("tenant-a", integrationEvent.ScopeId);
         Assert.Equal("user-a", integrationEvent.UserId);
         Assert.Equal("catalog", integrationEvent.SourceModule);
         Assert.Equal("catalog-item-updated", integrationEvent.NotificationName);

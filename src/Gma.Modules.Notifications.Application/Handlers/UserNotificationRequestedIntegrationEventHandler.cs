@@ -26,7 +26,7 @@ internal sealed class UserNotificationRequestedIntegrationEventHandler(
 
         Gma.Framework.Results.Result<UserNotification> notification = UserNotification.Create(
             integrationEvent.EventId,
-            integrationEvent.TenantId,
+            integrationEvent.ScopeId,
             integrationEvent.UserId,
             integrationEvent.SourceModule,
             integrationEvent.NotificationName,

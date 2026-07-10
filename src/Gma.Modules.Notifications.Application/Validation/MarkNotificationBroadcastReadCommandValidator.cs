@@ -13,7 +13,7 @@ internal sealed class MarkNotificationBroadcastReadCommandValidator
             yield return "Notification broadcast id is required.";
         }
 
-        foreach (string failure in NotificationBroadcastValidation.ValidateTenantId(command.TenantId))
+        foreach (string failure in NotificationBroadcastValidation.ValidateScopeId(command.ScopeId))
         {
             yield return failure;
         }

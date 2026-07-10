@@ -4,7 +4,7 @@ using Gma.Modules.Notifications.Contracts;
 using Gma.Framework.Cqrs;
 
 public sealed record ListNotificationBroadcastsQuery(
-    string? TenantId,
+    string? ScopeId,
     NotificationBroadcastRecipientKind RecipientKind,
     string RecipientId,
     bool UnreadOnly = false,

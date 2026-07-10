@@ -12,8 +12,8 @@ internal sealed class NotificationBroadcastConfiguration : IEntityTypeConfigurat
     {
         builder.ToTable("notification_broadcasts");
         builder.HasKey(broadcast => broadcast.Id);
-        builder.Property(broadcast => broadcast.TenantId)
-            .HasMaxLength(TenantIds.MaxLength);
+        builder.Property(broadcast => broadcast.ScopeId)
+            .HasMaxLength(ScopeIds.MaxLength);
         builder.Property(broadcast => broadcast.Audience)
             .HasConversion(
                 audience => NotificationBroadcastAudienceNames.ToWireName(audience),
@@ -63,7 +63,7 @@ internal sealed class NotificationBroadcastConfiguration : IEntityTypeConfigurat
             .HasColumnName("PayloadJson")
             .HasMaxLength(NotificationPayload.MaxLength)
             .IsRequired();
-        builder.HasIndex(broadcast => new { broadcast.Audience, broadcast.TenantId, broadcast.OccurredAtUtc });
-        builder.HasIndex(broadcast => new { broadcast.Audience, broadcast.TenantId, broadcast.StreamSequence });
+        builder.HasIndex(broadcast => new { broadcast.Audience, broadcast.ScopeId, broadcast.OccurredAtUtc });
+        builder.HasIndex(broadcast => new { broadcast.Audience, broadcast.ScopeId, broadcast.StreamSequence });
     }
 }

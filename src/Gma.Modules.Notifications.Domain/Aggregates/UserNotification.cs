@@ -6,7 +6,7 @@ using Gma.Framework.Domain.Models;
 using Gma.Framework.Naming;
 using Gma.Framework.Results;
 
-public sealed class UserNotification : TenantAggregateRoot<Guid>
+public sealed class UserNotification : ScopedAggregateRoot<Guid>
 {
     public const int UserIdMaxLength = 256;
     public const int ModuleMaxLength = 128;
@@ -17,8 +17,8 @@ public sealed class UserNotification : TenantAggregateRoot<Guid>
 
     private UserNotification() { }
 
-    private UserNotification(Guid id, string tenantId)
-        : base(id, tenantId)
+    private UserNotification(Guid id, string scopeId)
+        : base(id, scopeId)
     {
     }
 
@@ -34,7 +34,7 @@ public sealed class UserNotification : TenantAggregateRoot<Guid>
 
     public static Result<UserNotification> Create(
         Guid id,
-        string tenantId,
+        string scopeId,
         string userId,
         string module,
         string name,
@@ -51,7 +51,7 @@ public sealed class UserNotification : TenantAggregateRoot<Guid>
             return Result.Failure<UserNotification>(NotificationsDomainErrors.NotificationIdRequired);
         }
 
-        if (!TenantIds.TryNormalize(tenantId, out string? normalizedTenantId))
+        if (!ScopeIds.TryNormalize(scopeId, out string? normalizedScopeId))
         {
             return Result.Failure<UserNotification>(NotificationsDomainErrors.TenantInvalid);
         }
@@ -85,7 +85,7 @@ public sealed class UserNotification : TenantAggregateRoot<Guid>
             return Result.Failure<UserNotification>(payload.Error);
         }
 
-        UserNotification notification = new(id, normalizedTenantId!)
+        UserNotification notification = new(id, normalizedScopeId!)
         {
             Recipient = recipient.Value,
             Source = source.Value,

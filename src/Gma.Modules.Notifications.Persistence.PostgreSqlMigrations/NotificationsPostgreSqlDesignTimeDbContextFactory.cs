@@ -14,6 +14,6 @@ public sealed class NotificationsPostgreSqlDesignTimeDbContextFactory : IDesignT
                 NotificationsMigrations.PostgreSqlAssembly,
                 NotificationsMigrations.Schema,
                 NotificationsMigrations.HistoryTable),
-            new DesignTimeTenantContext());
+            new DesignTimeScopeContext());
     }
 }

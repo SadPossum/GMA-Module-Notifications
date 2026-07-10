@@ -17,13 +17,13 @@ internal sealed class MarkAllNotificationsReadCommandHandler(
         MarkAllNotificationsReadCommand command,
         CancellationToken cancellationToken)
     {
-        if (!NotificationHistoryAccess.CanAccessUserHistory(command.Subject, command.Subject.TenantId))
+        if (!NotificationHistoryAccess.CanAccessUserHistory(command.Subject))
         {
             return Result.Failure<MarkAllNotificationsReadResponse>(NotificationsApplicationErrors.AccessDenied);
         }
 
         int updatedCount = await repository
-            .MarkAllReadAsync(command.Subject, clock.UtcNow, cancellationToken)
+            .MarkAllReadAsync(command.Subject, command.ScopeId, clock.UtcNow, cancellationToken)
             .ConfigureAwait(false);
 
         return Result.Success(new MarkAllNotificationsReadResponse(updatedCount));

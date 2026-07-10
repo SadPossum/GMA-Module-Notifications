@@ -18,7 +18,7 @@ Gma.Modules.Notifications.AdminApi
 
 The module is not registered in the default hosts. Applications compose the user API and admin API explicitly when they need notification history.
 
-`NotificationsProfiles.Default` is selected by both `Gma.Modules.Notifications.Api` and `Gma.Modules.Notifications.AdminApi`. It provides the `notifications.history` and `notifications.broadcasts` composition features and requires tenant context. Live SSE/SignalR delivery is still host-selected through `Gma.Framework.Realtime.Notifications` plus the shared notification adapters, not implied by the durable module profile.
+`NotificationsProfiles.Default` is selected by both `Gma.Modules.Notifications.Api` and `Gma.Modules.Notifications.AdminApi`. It provides the `notifications.history` and `notifications.broadcasts` composition features and requires scope context. Live SSE/SignalR delivery is still host-selected through `Gma.Framework.Realtime.Notifications` plus the shared notification adapters, not implied by the durable module profile.
 
 ## User API
 
@@ -39,7 +39,7 @@ The module is not registered in the default hosts. Applications compose the user
 
 The stream accepts optional `afterSequence`. When omitted, the stream starts after the user's current maximum durable sequence, so it behaves as a live stream. When supplied, it replays rows with a greater `StreamSequence`, which gives clients a reconnect cursor.
 
-All endpoints require authentication and tenant context. When tenancy is enabled, the tenant claim on the token must match the active tenant context.
+All endpoints require authentication and scope context. In tenant-aware hosts, the tenant claim on the token must match the active scope.
 
 Current-user history endpoints use the shared access-subject foundation. The API constructs an explicit `AccessSubject` from the authenticated user and active tenant, while `Gma.Modules.Notifications.Application.Visibility.NotificationHistoryAccess` owns the simple user/tenant checks. Single-notification reads and mark-read operations check a minimal access summary and return not-found-shaped results for wrong-user or wrong-tenant access. List, stream, cursor, and read-all paths keep visibility constrained inside repository queries.
 
@@ -52,8 +52,8 @@ Current-user history endpoints use the shared access-subject foundation. The API
 | `GET` | `/api/admin/notifications` | List tenant notification history, optionally filtered by user and unread state. |
 | `GET` | `/api/admin/notifications/{notificationId}` | Get one tenant notification. |
 | `GET` | `/api/admin/notifications/history/stream` | Stream committed tenant history rows, optionally filtered by user. |
-| `GET` | `/api/admin/notifications/broadcasts` | List tenant-scoped broadcasts. |
-| `POST` | `/api/admin/notifications/broadcasts` | Create a tenant-scoped broadcast. |
+| `GET` | `/api/admin/notifications/broadcasts` | List scope-aware broadcasts. |
+| `POST` | `/api/admin/notifications/broadcasts` | Create a scope-aware broadcast. |
 | `GET` | `/api/admin/notifications/platform-broadcasts` | List platform-scoped broadcasts. |
 | `POST` | `/api/admin/notifications/platform-broadcasts` | Create a platform-scoped broadcast. |
 | `GET` | `/api/admin/notifications/broadcasts/inbox` | List broadcasts visible to the current admin actor. |
@@ -78,11 +78,11 @@ The module owns the `notifications` schema with:
 - `notification_broadcast_reads` for per-recipient broadcast read receipts;
 - `inbox_messages` for idempotent integration-event processing.
 
-Stored notification fields include tenant id, user id, source module, notification name/version, title/body/severity, occurrence time, stored time, read timestamp, canonical payload JSON, and a database-generated `StreamSequence`.
+Stored notification fields include scope id, user id, source module, notification name/version, title/body/severity, occurrence time, stored time, read timestamp, canonical payload JSON, and a database-generated `StreamSequence`.
 
 `StreamSequence` is the durable stream cursor. It avoids timestamp-only polling gaps and is indexed by tenant/user for current-user streams and by tenant for admin streams.
 
-Broadcasts have their own `StreamSequence`. Do not reuse a user history cursor for broadcast streams or vice versa. Tenant broadcasts carry a tenant id; platform broadcasts leave tenant id null and are included explicitly by the broadcast repository.
+Broadcasts have their own `StreamSequence`. Do not reuse a user history cursor for broadcast streams or vice versa. Tenant broadcasts carry a scope id; platform broadcasts leave scope id null and are included explicitly by the broadcast repository.
 
 Durable history and broadcast streams are configured through `Notifications:DurableStreams`. Defaults are a `25` item batch and a `00:00:01` poll interval. The module validates this at startup so oversized batches or tight poll loops fail fast. Poll-time query failures are logged and close the stream; clients should reconnect with their last acknowledged sequence.
 
@@ -150,7 +150,7 @@ builder.Services.AddUserNotificationRequestSubscription(OrderingModuleMetadata.N
 
 Do this only in hosts/examples that intentionally compose both the producing module and the Notifications consumer.
 
-Payload JSON is normalized and bounded to 32 KB for both direct history rows and broadcasts. Broadcast read receipts are idempotent per recipient scope/kind/id and use provider-specific insert-if-missing behavior so retry/concurrent read calls stay safe. The recipient scope includes the current/default tenant context when present, which prevents platform broadcast read state from crossing tenants with reused opaque recipient ids. For non-tenant projects, omit `TenancyModule`; the local default tenant id remains the broadcast tenant scope.
+Payload JSON is normalized and bounded to 32 KB for both direct history rows and broadcasts. Broadcast read receipts are idempotent per recipient scope/kind/id and use provider-specific insert-if-missing behavior so retry/concurrent read calls stay safe. The recipient scope includes the current/default tenant context when present, which prevents platform broadcast read state from crossing tenants with reused opaque recipient ids. For non-tenant projects, omit `TenancyModule`; the local default scope id remains the broadcast scope context.
 
 ## Boundaries
 

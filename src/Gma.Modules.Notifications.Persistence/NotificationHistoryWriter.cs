@@ -39,7 +39,7 @@ internal sealed class NotificationHistoryWriter(
 
         Result<UserNotification> notification = UserNotification.Create(
             message.Id,
-            message.TenantId,
+            message.ScopeId,
             message.UserId,
             message.Module,
             message.Name,

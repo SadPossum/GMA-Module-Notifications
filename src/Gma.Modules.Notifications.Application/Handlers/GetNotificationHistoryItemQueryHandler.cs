@@ -16,7 +16,7 @@ internal sealed class GetNotificationHistoryItemQueryHandler(
         CancellationToken cancellationToken)
     {
         NotificationHistoryItem? notification = await repository
-            .GetAsync(query.NotificationId, query.Subject, cancellationToken)
+            .GetAsync(query.NotificationId, query.Subject, query.ScopeId, cancellationToken)
             .ConfigureAwait(false);
 
         return notification is null

@@ -64,7 +64,7 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
 
-                    b.Property<string>("TenantId")
+                    b.Property<string>("ScopeId")
                         .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
@@ -86,9 +86,9 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
 
                     b.HasIndex("Module", "Name", "Version");
 
-                    b.HasIndex("TenantId", "UserId", "OccurredAtUtc");
+                    b.HasIndex("ScopeId", "UserId", "OccurredAtUtc");
 
-                    b.HasIndex("TenantId", "UserId", "ReadAtUtc");
+                    b.HasIndex("ScopeId", "UserId", "ReadAtUtc");
 
                     b.ToTable("user_notifications", "notifications");
                 });

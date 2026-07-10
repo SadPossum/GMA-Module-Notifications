@@ -6,6 +6,7 @@ using Gma.Framework.Cqrs;
 
 public sealed record StreamNotificationHistoryQuery(
     AccessSubject Subject,
+    string? ScopeId,
     long AfterStreamSequence,
     int BatchSize)
     : IQuery<IReadOnlyList<NotificationHistoryItem>>;

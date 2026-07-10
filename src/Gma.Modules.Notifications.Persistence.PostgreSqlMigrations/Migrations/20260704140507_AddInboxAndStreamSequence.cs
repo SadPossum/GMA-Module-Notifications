@@ -31,7 +31,7 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
                     Subject = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: false),
                     EventType = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: false),
                     Version = table.Column<int>(type: "integer", nullable: false),
-                    TenantId = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false),
+                    ScopeId = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false),
                     Status = table.Column<int>(type: "integer", nullable: false),
                     Attempts = table.Column<int>(type: "integer", nullable: false),
                     OccurredAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
@@ -48,16 +48,16 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_user_notifications_TenantId_StreamSequence",
+                name: "IX_user_notifications_ScopeId_StreamSequence",
                 schema: "notifications",
                 table: "user_notifications",
-                columns: new[] { "TenantId", "StreamSequence" });
+                columns: new[] { "ScopeId", "StreamSequence" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_user_notifications_TenantId_UserId_StreamSequence",
+                name: "IX_user_notifications_ScopeId_UserId_StreamSequence",
                 schema: "notifications",
                 table: "user_notifications",
-                columns: new[] { "TenantId", "UserId", "StreamSequence" });
+                columns: new[] { "ScopeId", "UserId", "StreamSequence" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_inbox_messages_Handler_Status",
@@ -74,12 +74,12 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
                 schema: "notifications");
 
             migrationBuilder.DropIndex(
-                name: "IX_user_notifications_TenantId_StreamSequence",
+                name: "IX_user_notifications_ScopeId_StreamSequence",
                 schema: "notifications",
                 table: "user_notifications");
 
             migrationBuilder.DropIndex(
-                name: "IX_user_notifications_TenantId_UserId_StreamSequence",
+                name: "IX_user_notifications_ScopeId_UserId_StreamSequence",
                 schema: "notifications",
                 table: "user_notifications");
 

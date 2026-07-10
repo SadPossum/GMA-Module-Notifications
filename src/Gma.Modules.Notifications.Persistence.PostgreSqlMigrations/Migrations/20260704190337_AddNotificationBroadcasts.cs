@@ -45,7 +45,7 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
-                    TenantId = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: true),
+                    ScopeId = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: true),
                     Audience = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: false),
                     Module = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false),
                     Name = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false),
@@ -78,16 +78,16 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
                 columns: new[] { "RecipientScope", "RecipientKind", "RecipientId", "BroadcastId" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_notification_broadcasts_Audience_TenantId_OccurredAtUtc",
+                name: "IX_notification_broadcasts_Audience_ScopeId_OccurredAtUtc",
                 schema: "notifications",
                 table: "notification_broadcasts",
-                columns: new[] { "Audience", "TenantId", "OccurredAtUtc" });
+                columns: new[] { "Audience", "ScopeId", "OccurredAtUtc" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_notification_broadcasts_Audience_TenantId_StreamSequence",
+                name: "IX_notification_broadcasts_Audience_ScopeId_StreamSequence",
                 schema: "notifications",
                 table: "notification_broadcasts",
-                columns: new[] { "Audience", "TenantId", "StreamSequence" });
+                columns: new[] { "Audience", "ScopeId", "StreamSequence" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_notification_broadcasts_Module_Name_Version",

@@ -5,6 +5,6 @@ using Gma.Framework.Cqrs;
 
 public sealed record GetNotificationBroadcastQuery(
     Guid BroadcastId,
-    string? TenantId,
+    string? ScopeId,
     NotificationBroadcastRecipientKind RecipientKind,
     string RecipientId) : IQuery<NotificationBroadcastItem>;

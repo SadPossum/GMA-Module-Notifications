@@ -28,7 +28,7 @@ public sealed class UserNotificationDomainTests
             "{ \"sku\": \"SKU-1\" }");
 
         Assert.True(result.IsSuccess);
-        Assert.Equal("tenant-a", result.Value.TenantId);
+        Assert.Equal("tenant-a", result.Value.ScopeId);
         Assert.Equal("user-a", result.Value.Recipient.UserId);
         Assert.Equal("catalog", result.Value.Source.Module);
         Assert.Equal("catalog.item-updated", result.Value.Source.Name);

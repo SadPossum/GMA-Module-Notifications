@@ -2,14 +2,13 @@ namespace Gma.Modules.Notifications.Contracts;
 
 using Gma.Framework.Messaging;
 using Gma.Framework.Naming;
-using Gma.Framework.Tenancy;
-using Gma.Framework.Tenancy.Messaging;
+using Gma.Framework.Scoping;
 using FrameworkNotificationNames = Gma.Framework.Notifications.NotificationNames;
 
 [IntegrationEventName(EventType)]
 [IntegrationEventVersion(EventVersion)]
-[TenantScoped]
-public sealed record UserNotificationRequestedIntegrationEvent : TenantIntegrationEvent
+[ScopeAware]
+public sealed record UserNotificationRequestedIntegrationEvent : IntegrationEvent, IScopedIntegrationEvent
 {
     public const string EventType = "user-notification-requested";
     public const int EventVersion = 1;
@@ -21,7 +20,7 @@ public sealed record UserNotificationRequestedIntegrationEvent : TenantIntegrati
 
     public UserNotificationRequestedIntegrationEvent(
         Guid eventId,
-        string tenantId,
+        string scopeId,
         DateTimeOffset occurredAtUtc,
         string userId,
         string sourceModule,
@@ -31,8 +30,9 @@ public sealed record UserNotificationRequestedIntegrationEvent : TenantIntegrati
         string? body,
         NotificationSeverity severity,
         string payloadJson)
-        : base(eventId, tenantId, occurredAtUtc, EventType, EventVersion)
+        : base(eventId, occurredAtUtc, EventType, EventVersion)
     {
+        this.ScopeId = ScopeIds.Normalize(scopeId, nameof(scopeId));
         this.UserId = NotificationRecipientUserIds.Normalize(userId, nameof(userId));
         this.SourceModule = NormalizeSourceModule(sourceModule);
         this.NotificationName = NormalizeNotificationName(notificationName);
@@ -47,6 +47,7 @@ public sealed record UserNotificationRequestedIntegrationEvent : TenantIntegrati
         this.PayloadJson = NormalizePayloadJson(payloadJson);
     }
 
+    public string ScopeId { get; }
     public string UserId { get; }
     public string SourceModule { get; }
     public string NotificationName { get; }
@@ -55,6 +56,7 @@ public sealed record UserNotificationRequestedIntegrationEvent : TenantIntegrati
     public string? Body { get; }
     public NotificationSeverity Severity { get; }
     public string PayloadJson { get; }
+    string IScopedIntegrationEvent.ScopeId => this.ScopeId;
 
     private static string NormalizeSourceModule(string sourceModule)
     {

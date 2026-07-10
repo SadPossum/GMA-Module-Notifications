@@ -70,7 +70,7 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("StreamSequence"));
 
-                    b.Property<string>("TenantId")
+                    b.Property<string>("ScopeId")
                         .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
@@ -90,15 +90,15 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "StreamSequence");
+                    b.HasIndex("ScopeId", "StreamSequence");
 
                     b.HasIndex("Module", "Name", "Version");
 
-                    b.HasIndex("TenantId", "UserId", "OccurredAtUtc");
+                    b.HasIndex("ScopeId", "UserId", "OccurredAtUtc");
 
-                    b.HasIndex("TenantId", "UserId", "ReadAtUtc");
+                    b.HasIndex("ScopeId", "UserId", "ReadAtUtc");
 
-                    b.HasIndex("TenantId", "UserId", "StreamSequence");
+                    b.HasIndex("ScopeId", "UserId", "StreamSequence");
 
                     b.ToTable("user_notifications", "notifications");
                 });
@@ -151,7 +151,7 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
 
-                    b.Property<string>("TenantId")
+                    b.Property<string>("ScopeId")
                         .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");

@@ -14,6 +14,6 @@ public sealed class NotificationsSqlServerDesignTimeDbContextFactory : IDesignTi
                 NotificationsMigrations.SqlServerAssembly,
                 NotificationsMigrations.Schema,
                 NotificationsMigrations.HistoryTable),
-            new DesignTimeTenantContext());
+            new DesignTimeScopeContext());
     }
 }

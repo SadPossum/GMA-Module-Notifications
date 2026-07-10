@@ -20,11 +20,11 @@ internal static class NotificationBroadcastValidation
         }
     }
 
-    public static IEnumerable<string> ValidateTenantId(string? tenantId)
+    public static IEnumerable<string> ValidateScopeId(string? scopeId)
     {
-        if (!string.IsNullOrWhiteSpace(tenantId) && !TenantIds.TryNormalize(tenantId, out _))
+        if (!string.IsNullOrWhiteSpace(scopeId) && !ScopeIds.TryNormalize(scopeId, out _))
         {
-            yield return "Notification broadcast tenant id is invalid.";
+            yield return "Notification broadcast scope id is invalid.";
         }
     }
 }

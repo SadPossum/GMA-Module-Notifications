@@ -7,7 +7,7 @@ internal sealed class ListNotificationBroadcastsQueryValidator : IQueryValidator
 {
     public IEnumerable<string> Validate(ListNotificationBroadcastsQuery query)
     {
-        foreach (string failure in NotificationBroadcastValidation.ValidateTenantId(query.TenantId))
+        foreach (string failure in NotificationBroadcastValidation.ValidateScopeId(query.ScopeId))
         {
             yield return failure;
         }

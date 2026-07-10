@@ -14,13 +14,13 @@ internal sealed class GetNotificationStreamCursorQueryHandler(
         GetNotificationStreamCursorQuery query,
         CancellationToken cancellationToken)
     {
-        if (!NotificationHistoryAccess.CanAccessUserHistory(query.Subject, query.Subject.TenantId))
+        if (!NotificationHistoryAccess.CanAccessUserHistory(query.Subject))
         {
             return Result.Failure<long>(NotificationsApplicationErrors.AccessDenied);
         }
 
         long cursor = await repository
-            .GetCurrentStreamSequenceForUserAsync(query.Subject, cancellationToken)
+            .GetCurrentStreamSequenceForUserAsync(query.Subject, query.ScopeId, cancellationToken)
             .ConfigureAwait(false);
 
         return Result.Success(cursor);

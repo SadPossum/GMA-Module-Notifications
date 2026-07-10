@@ -4,6 +4,6 @@ using Gma.Modules.Notifications.Contracts;
 using Gma.Framework.Cqrs;
 
 public sealed record MarkAllNotificationBroadcastsReadCommand(
-    string? TenantId,
+    string? ScopeId,
     NotificationBroadcastRecipientKind RecipientKind,
     string RecipientId) : ITransactionalCommand<MarkAllNotificationBroadcastsReadResponse>;

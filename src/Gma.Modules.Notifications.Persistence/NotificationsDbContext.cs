@@ -4,11 +4,11 @@ using Microsoft.EntityFrameworkCore;
 using Gma.Modules.Notifications.Domain.Aggregates;
 using Gma.Modules.Notifications.Domain.Entities;
 using Gma.Framework.Messaging.Infrastructure;
+using Gma.Framework.Scoping;
 using Gma.Framework.Persistence.EntityFrameworkCore;
-using Gma.Framework.Tenancy;
 
-public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbContext> options, ITenantContext tenantContext)
-    : TenantAwareDbContext<NotificationsDbContext>(options, tenantContext)
+public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbContext> options, IScopeContext scopeContext)
+    : ScopeAwareDbContext<NotificationsDbContext>(options, scopeContext)
 {
     public DbSet<UserNotification> UserNotifications => this.Set<UserNotification>();
     public DbSet<NotificationBroadcast> NotificationBroadcasts => this.Set<NotificationBroadcast>();
@@ -19,6 +19,6 @@ public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbConte
     {
         modelBuilder.HasDefaultSchema(NotificationsMigrations.Schema);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(NotificationsDbContext).Assembly);
-        this.ApplyTenantConventions(modelBuilder);
+        this.ApplyScopeConventions(modelBuilder);
     }
 }

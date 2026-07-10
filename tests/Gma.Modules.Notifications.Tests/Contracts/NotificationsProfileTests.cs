@@ -3,7 +3,7 @@ namespace Gma.Modules.Notifications.Tests;
 using Gma.Modules.Notifications.Contracts;
 using Gma.Framework.ModuleComposition;
 using Gma.Framework.Notifications;
-using Gma.Framework.Tenancy;
+using Gma.Framework.Scoping;
 using Xunit;
 
 [Trait("Category", "Unit")]
@@ -18,7 +18,7 @@ public sealed class NotificationsProfileTests
         Assert.Equal(NotificationsProfiles.DefaultName, profile.ProfileName);
         Assert.Contains(profile.Provides, feature => feature.Id == NotificationsCompositionFeatures.History);
         Assert.Contains(profile.Provides, feature => feature.Id == NotificationsCompositionFeatures.Broadcasts);
-        Assert.Contains(profile.Requires, feature => feature.Id == TenancyCompositionFeatures.Context);
+        Assert.Contains(profile.Requires, feature => feature.Id == ScopeCompositionFeatures.Context);
     }
 
     [Fact]

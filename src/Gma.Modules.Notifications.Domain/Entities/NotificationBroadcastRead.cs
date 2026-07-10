@@ -13,7 +13,7 @@ public sealed class NotificationBroadcastRead : Entity<Guid>
 {
     public const int RecipientIdMaxLength = UserNotification.UserIdMaxLength;
     public const string GlobalRecipientScope = "global";
-    public const int RecipientScopeMaxLength = TenantIds.MaxLength + 7;
+    public const int RecipientScopeMaxLength = ScopeIds.MaxLength + 7;
 
     private const string TenantRecipientScopePrefix = "tenant:";
 
@@ -33,7 +33,7 @@ public sealed class NotificationBroadcastRead : Entity<Guid>
     public static Result<NotificationBroadcastRead> Create(
         Guid id,
         Guid broadcastId,
-        string? tenantId,
+        string? scopeId,
         NotificationBroadcastRecipientKind recipientKind,
         string recipientId,
         DateTimeOffset readAtUtc)
@@ -48,7 +48,7 @@ public sealed class NotificationBroadcastRead : Entity<Guid>
             return Result.Failure<NotificationBroadcastRead>(NotificationsDomainErrors.NotificationIdRequired);
         }
 
-        Result<string> recipientScope = CreateRecipientScope(tenantId);
+        Result<string> recipientScope = CreateRecipientScope(scopeId);
         if (recipientScope.IsFailure)
         {
             return Result.Failure<NotificationBroadcastRead>(recipientScope.Error);
@@ -77,15 +77,15 @@ public sealed class NotificationBroadcastRead : Entity<Guid>
         return Result.Success(read);
     }
 
-    public static Result<string> CreateRecipientScope(string? tenantId)
+    public static Result<string> CreateRecipientScope(string? scopeId)
     {
-        if (string.IsNullOrWhiteSpace(tenantId))
+        if (string.IsNullOrWhiteSpace(scopeId))
         {
             return Result.Success(GlobalRecipientScope);
         }
 
-        return TenantIds.TryNormalize(tenantId, out string? normalizedTenantId)
-            ? Result.Success(TenantRecipientScopePrefix + normalizedTenantId)
+        return ScopeIds.TryNormalize(scopeId, out string? normalizedScopeId)
+            ? Result.Success(TenantRecipientScopePrefix + normalizedScopeId)
             : Result.Failure<string>(NotificationsDomainErrors.TenantInvalid);
     }
 

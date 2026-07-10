@@ -1,6 +1,6 @@
 namespace Gma.Modules.Notifications.Contracts;
 
-using Gma.Framework.Authorization;
+using Gma.Framework.Permissions;
 using Gma.Framework.ModuleComposition;
 using Gma.Framework.Modules;
 
@@ -16,15 +16,15 @@ public static class NotificationsModuleMetadata
             new ModulePermissionDescriptor(
                 NotificationsAdminPermissionCodes.HistoryRead,
                 "Read tenant notification history.",
-                tenantScoped: true),
+                scopeRequirement: PermissionScopeRequirement.Scoped),
             new ModulePermissionDescriptor(
                 NotificationsAdminPermissionCodes.BroadcastsRead,
                 "Read notification broadcasts.",
-                tenantScoped: true),
+                scopeRequirement: PermissionScopeRequirement.Scoped),
             new ModulePermissionDescriptor(
                 NotificationsAdminPermissionCodes.BroadcastsCreate,
                 "Create notification broadcasts.",
-                tenantScoped: true),
+                scopeRequirement: PermissionScopeRequirement.Scoped),
         ])
         .WithProfile(NotificationsProfiles.Default)
         .Build();

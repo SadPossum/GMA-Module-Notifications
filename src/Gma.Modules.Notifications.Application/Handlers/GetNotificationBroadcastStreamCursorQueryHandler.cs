@@ -13,7 +13,7 @@ internal sealed class GetNotificationBroadcastStreamCursorQueryHandler(INotifica
         CancellationToken cancellationToken)
     {
         Result<NotificationBroadcastRecipientContext> recipient =
-            NotificationBroadcastRecipientContext.Create(query.TenantId, query.RecipientKind, query.RecipientId);
+            NotificationBroadcastRecipientContext.Create(query.ScopeId, query.RecipientKind, query.RecipientId);
         if (recipient.IsFailure)
         {
             return Result.Failure<long>(recipient.Error);

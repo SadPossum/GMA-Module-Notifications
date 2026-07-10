@@ -14,7 +14,7 @@ internal sealed class GetNotificationBroadcastQueryHandler(INotificationBroadcas
         CancellationToken cancellationToken)
     {
         Result<NotificationBroadcastRecipientContext> recipient =
-            NotificationBroadcastRecipientContext.Create(query.TenantId, query.RecipientKind, query.RecipientId);
+            NotificationBroadcastRecipientContext.Create(query.ScopeId, query.RecipientKind, query.RecipientId);
         if (recipient.IsFailure)
         {
             return Result.Failure<NotificationBroadcastItem>(recipient.Error);

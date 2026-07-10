@@ -42,7 +42,7 @@ public interface INotificationBroadcastRepository
         CancellationToken cancellationToken);
 
     Task<AdminNotificationBroadcastListResponse> ListTenantBroadcastsAsync(
-        string tenantId,
+        string scopeId,
         PageRequest pageRequest,
         CancellationToken cancellationToken);
 

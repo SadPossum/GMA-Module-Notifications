@@ -4,7 +4,7 @@ using System.Text.Json;
 
 public sealed record AdminNotificationBroadcastItem(
     Guid BroadcastId,
-    string? TenantId,
+    string? ScopeId,
     NotificationBroadcastAudience Audience,
     string Module,
     string Name,

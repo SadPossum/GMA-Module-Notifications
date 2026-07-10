@@ -30,7 +30,7 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
                     Subject = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
                     EventType = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
                     Version = table.Column<int>(type: "int", nullable: false),
-                    TenantId = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
+                    ScopeId = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
                     Status = table.Column<int>(type: "int", nullable: false),
                     Attempts = table.Column<int>(type: "int", nullable: false),
                     OccurredAtUtc = table.Column<DateTimeOffset>(type: "datetimeoffset", nullable: false),
@@ -47,16 +47,16 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_user_notifications_TenantId_StreamSequence",
+                name: "IX_user_notifications_ScopeId_StreamSequence",
                 schema: "notifications",
                 table: "user_notifications",
-                columns: new[] { "TenantId", "StreamSequence" });
+                columns: new[] { "ScopeId", "StreamSequence" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_user_notifications_TenantId_UserId_StreamSequence",
+                name: "IX_user_notifications_ScopeId_UserId_StreamSequence",
                 schema: "notifications",
                 table: "user_notifications",
-                columns: new[] { "TenantId", "UserId", "StreamSequence" });
+                columns: new[] { "ScopeId", "UserId", "StreamSequence" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_inbox_messages_Handler_Status",
@@ -73,12 +73,12 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
                 schema: "notifications");
 
             migrationBuilder.DropIndex(
-                name: "IX_user_notifications_TenantId_StreamSequence",
+                name: "IX_user_notifications_ScopeId_StreamSequence",
                 schema: "notifications",
                 table: "user_notifications");
 
             migrationBuilder.DropIndex(
-                name: "IX_user_notifications_TenantId_UserId_StreamSequence",
+                name: "IX_user_notifications_ScopeId_UserId_StreamSequence",
                 schema: "notifications",
                 table: "user_notifications");
 

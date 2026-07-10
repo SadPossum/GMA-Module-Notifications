@@ -17,7 +17,7 @@ public sealed class NotificationBroadcastRecipientContextTests
             NotificationBroadcastRecipientContext.Create(" tenant-a ", ContractRecipientKind.Admin, " admin-a ");
 
         Assert.True(result.IsSuccess);
-        Assert.Equal("tenant-a", result.Value.TenantId);
+        Assert.Equal("tenant-a", result.Value.ScopeId);
         Assert.Equal(NotificationBroadcastRecipientKind.Admin, result.Value.RecipientKind);
         Assert.Equal("admin", result.Value.RecipientKindName);
         Assert.Equal("admin-a", result.Value.RecipientId);
@@ -31,7 +31,7 @@ public sealed class NotificationBroadcastRecipientContextTests
             NotificationBroadcastRecipientContext.Create(null, ContractRecipientKind.User, "user-a");
 
         Assert.True(result.IsSuccess);
-        Assert.Null(result.Value.TenantId);
+        Assert.Null(result.Value.ScopeId);
         Assert.Equal(NotificationBroadcastRead.GlobalRecipientScope, result.Value.RecipientScope);
     }
 

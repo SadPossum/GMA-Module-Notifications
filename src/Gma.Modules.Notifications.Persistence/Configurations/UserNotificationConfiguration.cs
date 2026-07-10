@@ -59,9 +59,9 @@ internal sealed class UserNotificationConfiguration : IEntityTypeConfiguration<U
             .HasColumnName("PayloadJson")
             .HasMaxLength(NotificationPayload.MaxLength)
             .IsRequired();
-        builder.HasIndex(notification => new { notification.TenantId, notification.Recipient, notification.OccurredAtUtc });
-        builder.HasIndex(notification => new { notification.TenantId, notification.Recipient, notification.ReadAtUtc });
-        builder.HasIndex(notification => new { notification.TenantId, notification.Recipient, notification.StreamSequence });
-        builder.HasIndex(notification => new { notification.TenantId, notification.StreamSequence });
+        builder.HasIndex(notification => new { notification.ScopeId, notification.Recipient, notification.OccurredAtUtc });
+        builder.HasIndex(notification => new { notification.ScopeId, notification.Recipient, notification.ReadAtUtc });
+        builder.HasIndex(notification => new { notification.ScopeId, notification.Recipient, notification.StreamSequence });
+        builder.HasIndex(notification => new { notification.ScopeId, notification.StreamSequence });
     }
 }

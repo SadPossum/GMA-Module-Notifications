@@ -15,7 +15,7 @@ internal sealed class MarkNotificationReadCommandHandler(
     public async Task<Result<Unit>> HandleAsync(MarkNotificationReadCommand command, CancellationToken cancellationToken)
     {
         bool updated = await repository
-            .MarkReadAsync(command.NotificationId, command.Subject, clock.UtcNow, cancellationToken)
+            .MarkReadAsync(command.NotificationId, command.Subject, command.ScopeId, clock.UtcNow, cancellationToken)
             .ConfigureAwait(false);
 
         return updated

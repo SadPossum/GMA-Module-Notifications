@@ -9,9 +9,9 @@ internal sealed class ListTenantNotificationBroadcastsQueryValidator
 {
     public IEnumerable<string> Validate(ListTenantNotificationBroadcastsQuery query)
     {
-        if (!TenantIds.TryNormalize(query.TenantId, out _))
+        if (!ScopeIds.TryNormalize(query.ScopeId, out _))
         {
-            yield return "Notification broadcast tenant id is invalid.";
+            yield return "Notification broadcast scope id is invalid.";
         }
     }
 }

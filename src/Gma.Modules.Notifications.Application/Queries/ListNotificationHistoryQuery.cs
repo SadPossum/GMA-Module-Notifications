@@ -7,6 +7,7 @@ using Gma.Framework.Pagination;
 
 public sealed record ListNotificationHistoryQuery(
     AccessSubject Subject,
+    string? ScopeId,
     bool UnreadOnly = false,
     int Page = PageRequest.DefaultPage,
     int PageSize = PageRequest.DefaultPageSize)

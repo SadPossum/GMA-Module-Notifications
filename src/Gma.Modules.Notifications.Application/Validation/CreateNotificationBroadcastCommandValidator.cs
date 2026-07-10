@@ -17,15 +17,15 @@ internal sealed class CreateNotificationBroadcastCommandValidator : ICommandVali
         }
 
         if (command.Audience is ContractAudience.TenantUsers or ContractAudience.TenantAdmins &&
-            string.IsNullOrWhiteSpace(command.TenantId))
+            string.IsNullOrWhiteSpace(command.ScopeId))
         {
-            yield return "Tenant-scoped notification broadcasts require a tenant id.";
+            yield return "Scope-aware notification broadcasts require a scope id.";
         }
 
         if (command.Audience is ContractAudience.PlatformUsers or ContractAudience.PlatformAdmins &&
-            !string.IsNullOrWhiteSpace(command.TenantId))
+            !string.IsNullOrWhiteSpace(command.ScopeId))
         {
-            yield return "Platform notification broadcasts cannot include a tenant id.";
+            yield return "Platform notification broadcasts cannot include a scope id.";
         }
 
         if (string.IsNullOrWhiteSpace(command.Name))

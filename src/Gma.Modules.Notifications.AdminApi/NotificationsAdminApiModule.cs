@@ -20,8 +20,8 @@ using Gma.Framework.Api.Results;
 using Gma.Framework.Cqrs;
 using Gma.Framework.ModuleComposition;
 using Gma.Framework.Pagination;
+using Gma.Framework.Scoping;
 using Gma.Framework.Results;
-using Gma.Framework.Tenancy;
 
 public sealed class NotificationsAdminApiModule : IAdminApiModule
 {
@@ -82,7 +82,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
             int? pageSize,
             HttpContext httpContext,
             AdminApiExecutor executor,
-            ITenantContext tenantContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
             await executor.ExecuteAsync(
@@ -91,7 +91,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
                 requireTenant: true,
                 token => dispatcher.QueryAsync(
                     new ListTenantNotificationBroadcastsQuery(
-                        RequiredTenantId(tenantContext),
+                        RequiredScopeId(scopeContext),
                         page ?? PageRequest.DefaultPage,
                         pageSize ?? PageRequest.DefaultPageSize),
                     token),
@@ -101,7 +101,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
             AdminCreateNotificationBroadcastRequest request,
             HttpContext httpContext,
             AdminApiExecutor executor,
-            ITenantContext tenantContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
             await executor.ExecuteAsync(
@@ -111,7 +111,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
                 token => dispatcher.SendAsync(
                     new CreateNotificationBroadcastCommand(
                         request.Audience,
-                        RequiredTenantId(tenantContext),
+                        RequiredScopeId(scopeContext),
                         NotificationsModuleMetadata.Name,
                         request.Name,
                         request.Version,
@@ -173,7 +173,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
             HttpContext httpContext,
             AdminApiExecutor executor,
             IAdminActorContext actorContext,
-            ITenantContext tenantContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
             await executor.ExecuteAsync(
@@ -182,7 +182,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
                 requireTenant: true,
                 token => dispatcher.QueryAsync(
                     new ListNotificationBroadcastsQuery(
-                        RequiredTenantId(tenantContext),
+                        RequiredScopeId(scopeContext),
                         NotificationBroadcastRecipientKind.Admin,
                         RequiredActorId(actorContext),
                         unreadOnly ?? false,
@@ -196,7 +196,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
             HttpContext httpContext,
             AdminApiExecutor executor,
             IAdminActorContext actorContext,
-            ITenantContext tenantContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
             await executor.ExecuteAsync(
@@ -206,7 +206,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
                 token => dispatcher.SendAsync(
                     new MarkNotificationBroadcastReadCommand(
                         broadcastId,
-                        RequiredTenantId(tenantContext),
+                        RequiredScopeId(scopeContext),
                         NotificationBroadcastRecipientKind.Admin,
                         RequiredActorId(actorContext)),
                     token),
@@ -218,7 +218,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
             HttpContext httpContext,
             AdminApiExecutor executor,
             IAdminActorContext actorContext,
-            ITenantContext tenantContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
             await executor.ExecuteAsync(
@@ -227,7 +227,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
                 requireTenant: true,
                 token => dispatcher.SendAsync(
                     new MarkAllNotificationBroadcastsReadCommand(
-                        RequiredTenantId(tenantContext),
+                        RequiredScopeId(scopeContext),
                         NotificationBroadcastRecipientKind.Admin,
                         RequiredActorId(actorContext)),
                     token),
@@ -238,7 +238,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
             HttpContext httpContext,
             AdminApiExecutor executor,
             IAdminActorContext actorContext,
-            ITenantContext tenantContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             ILogger<NotificationsAdminApiModule> logger,
             IOptions<NotificationStreamOptions> streamOptions,
@@ -254,7 +254,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
                         return Result.Failure<IResult>(NotificationsApplicationErrors.StreamCursorInvalid);
                     }
 
-                    string tenantId = RequiredTenantId(tenantContext);
+                    string scopeId = RequiredScopeId(scopeContext);
                     string actorId = RequiredActorId(actorContext);
                     long cursor;
                     if (afterSequence.HasValue)
@@ -265,7 +265,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
                     {
                         Result<long> cursorResult = await ResolveCurrentBroadcastCursorAsync(
                             dispatcher,
-                            tenantId,
+                            scopeId,
                             NotificationBroadcastRecipientKind.Admin,
                             actorId,
                             token).ConfigureAwait(false);
@@ -280,7 +280,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
                     return Result.Success<IResult>(TypedResults.ServerSentEvents(
                         StreamBroadcastsAsync(
                             dispatcher,
-                            tenantId,
+                            scopeId,
                             NotificationBroadcastRecipientKind.Admin,
                             actorId,
                             cursor,
@@ -353,12 +353,12 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
 
     private static Task<Result<long>> ResolveCurrentBroadcastCursorAsync(
         IRequestDispatcher dispatcher,
-        string? tenantId,
+        string? scopeId,
         NotificationBroadcastRecipientKind recipientKind,
         string recipientId,
         CancellationToken cancellationToken) =>
         dispatcher.QueryAsync(
-            new GetNotificationBroadcastStreamCursorQuery(tenantId, recipientKind, recipientId),
+            new GetNotificationBroadcastStreamCursorQuery(scopeId, recipientKind, recipientId),
             cancellationToken);
 
     private static async IAsyncEnumerable<SseItem<AdminNotificationHistoryItem>> StreamTenantHistoryAsync(
@@ -399,7 +399,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
 
     private static async IAsyncEnumerable<SseItem<NotificationBroadcastItem>> StreamBroadcastsAsync(
         IRequestDispatcher dispatcher,
-        string? tenantId,
+        string? scopeId,
         NotificationBroadcastRecipientKind recipientKind,
         string recipientId,
         long initialCursor,
@@ -414,7 +414,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
         {
             Result<IReadOnlyList<NotificationBroadcastItem>> result = await dispatcher.QueryAsync(
                 new StreamNotificationBroadcastsQuery(
-                    tenantId,
+                    scopeId,
                     recipientKind,
                     recipientId,
                     afterSequence,
@@ -440,8 +440,8 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
         }
     }
 
-    private static string RequiredTenantId(ITenantContext tenantContext) =>
-        tenantContext.TenantId ?? string.Empty;
+    private static string RequiredScopeId(IScopeContext scopeContext) =>
+        scopeContext.ScopeId ?? string.Empty;
 
     private static string RequiredActorId(IAdminActorContext actorContext) =>
         actorContext.Actor?.Id ?? string.Empty;

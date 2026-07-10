@@ -31,7 +31,7 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
                     CreatedAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     ReadAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
                     PayloadJson = table.Column<string>(type: "text", nullable: false),
-                    TenantId = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false)
+                    ScopeId = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false)
                 },
                 constraints: table =>
                 {
@@ -45,16 +45,16 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
                 columns: new[] { "Module", "Name", "Version" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_user_notifications_TenantId_UserId_OccurredAtUtc",
+                name: "IX_user_notifications_ScopeId_UserId_OccurredAtUtc",
                 schema: "notifications",
                 table: "user_notifications",
-                columns: new[] { "TenantId", "UserId", "OccurredAtUtc" });
+                columns: new[] { "ScopeId", "UserId", "OccurredAtUtc" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_user_notifications_TenantId_UserId_ReadAtUtc",
+                name: "IX_user_notifications_ScopeId_UserId_ReadAtUtc",
                 schema: "notifications",
                 table: "user_notifications",
-                columns: new[] { "TenantId", "UserId", "ReadAtUtc" });
+                columns: new[] { "ScopeId", "UserId", "ReadAtUtc" });
         }
 
         /// <inheritdoc />

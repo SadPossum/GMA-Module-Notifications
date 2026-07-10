@@ -8,7 +8,7 @@ internal sealed class MarkAllNotificationBroadcastsReadCommandValidator
 {
     public IEnumerable<string> Validate(MarkAllNotificationBroadcastsReadCommand command)
     {
-        foreach (string failure in NotificationBroadcastValidation.ValidateTenantId(command.TenantId))
+        foreach (string failure in NotificationBroadcastValidation.ValidateScopeId(command.ScopeId))
         {
             yield return failure;
         }

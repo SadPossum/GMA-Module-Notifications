@@ -25,7 +25,7 @@ internal sealed class CreateNotificationBroadcastCommandHandler(
 
         Result<NotificationBroadcast> broadcast = NotificationBroadcast.Create(
             broadcastId,
-            command.TenantId,
+            command.ScopeId,
             NotificationBroadcastAudienceMapper.ToDomainValue(command.Audience),
             command.Module,
             command.Name,

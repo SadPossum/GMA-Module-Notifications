@@ -62,15 +62,15 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("StreamSequence"));
 
-                    b.Property<string>("TenantId")
+                    b.Property<string>("ScopeId")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Audience", "TenantId", "OccurredAtUtc");
+                    b.HasIndex("Audience", "ScopeId", "OccurredAtUtc");
 
-                    b.HasIndex("Audience", "TenantId", "StreamSequence");
+                    b.HasIndex("Audience", "ScopeId", "StreamSequence");
 
                     b.ToTable("notification_broadcasts", "notifications");
                 });
@@ -114,20 +114,20 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("StreamSequence"));
 
-                    b.Property<string>("TenantId")
+                    b.Property<string>("ScopeId")
                         .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "StreamSequence");
+                    b.HasIndex("ScopeId", "StreamSequence");
 
-                    b.HasIndex("TenantId", "Recipient", "OccurredAtUtc");
+                    b.HasIndex("ScopeId", "Recipient", "OccurredAtUtc");
 
-                    b.HasIndex("TenantId", "Recipient", "ReadAtUtc");
+                    b.HasIndex("ScopeId", "Recipient", "ReadAtUtc");
 
-                    b.HasIndex("TenantId", "Recipient", "StreamSequence");
+                    b.HasIndex("ScopeId", "Recipient", "StreamSequence");
 
                     b.ToTable("user_notifications", "notifications");
                 });
@@ -214,7 +214,7 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
                     b.Property<string>("ScopeId")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)")
-                        .HasColumnName("TenantId");
+                        .HasColumnName("ScopeId");
 
                     b.Property<int>("Status")
                         .HasColumnType("integer");

@@ -12,7 +12,7 @@ internal sealed class GetNotificationBroadcastQueryValidator : IQueryValidator<G
             yield return "Notification broadcast id is required.";
         }
 
-        foreach (string failure in NotificationBroadcastValidation.ValidateTenantId(query.TenantId))
+        foreach (string failure in NotificationBroadcastValidation.ValidateScopeId(query.ScopeId))
         {
             yield return failure;
         }

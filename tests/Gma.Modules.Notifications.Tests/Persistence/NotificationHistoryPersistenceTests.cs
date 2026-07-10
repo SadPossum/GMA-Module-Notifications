@@ -17,10 +17,10 @@ using Gma.Framework.Cqrs;
 using Gma.Framework.Cqrs.Infrastructure;
 using Gma.Framework.Notifications;
 using Gma.Framework.Notifications.Infrastructure;
+using Gma.Framework.Scoping;
 using Gma.Framework.Results;
 using Gma.Framework.Runtime.Identity;
 using Gma.Framework.Runtime.Time;
-using Gma.Framework.Tenancy;
 using Xunit;
 using DomainBroadcastAudience = Gma.Modules.Notifications.Domain.ValueObjects.NotificationBroadcastAudience;
 using DomainNotificationSeverity = Gma.Modules.Notifications.Domain.ValueObjects.NotificationSeverity;
@@ -35,7 +35,7 @@ public sealed class NotificationHistoryPersistenceTests
     [Fact]
     public async Task Publisher_persists_history_when_live_notifications_are_disabled()
     {
-        using IHost host = BuildHost(enabled: false, tenantId: "tenant-a");
+        using IHost host = BuildHost(enabled: false, scopeId: "tenant-a");
         using IServiceScope scope = host.Services.CreateScope();
         IUserNotificationPublisher publisher = scope.ServiceProvider.GetRequiredService<IUserNotificationPublisher>();
         NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
@@ -62,7 +62,7 @@ public sealed class NotificationHistoryPersistenceTests
                 Now));
 
         UserNotification notification = Assert.Single(await dbContext.UserNotifications.ToArrayAsync());
-        Assert.Equal("tenant-a", notification.TenantId);
+        Assert.Equal("tenant-a", notification.ScopeId);
         Assert.Equal("user-a", notification.Recipient.UserId);
         Assert.Equal("catalog.item-updated", notification.Source.Name);
         Assert.Equal(DomainNotificationSeverity.Success, notification.Severity);
@@ -87,17 +87,17 @@ public sealed class NotificationHistoryPersistenceTests
 
         await using NotificationsDbContext readTenantA = CreateDbContext(databaseRoot, "tenant-a");
         UserNotification[] visible = await readTenantA.UserNotifications
-            .OrderBy(notification => notification.TenantId)
+            .OrderBy(notification => notification.ScopeId)
             .ToArrayAsync();
 
         UserNotification notification = Assert.Single(visible);
-        Assert.Equal("tenant-a", notification.TenantId);
+        Assert.Equal("tenant-a", notification.ScopeId);
     }
 
     [Fact]
     public async Task Mark_read_commands_update_current_user_notifications_through_unit_of_work()
     {
-        using IHost host = BuildHost(enabled: false, tenantId: "tenant-a");
+        using IHost host = BuildHost(enabled: false, scopeId: "tenant-a");
         using IServiceScope scope = host.Services.CreateScope();
         NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
         IRequestDispatcher dispatcher = scope.ServiceProvider.GetRequiredService<IRequestDispatcher>();
@@ -107,13 +107,13 @@ public sealed class NotificationHistoryPersistenceTests
         await dbContext.SaveChangesAsync();
 
         Result<Unit> markOne = await dispatcher.SendAsync(
-            new MarkNotificationReadCommand(notificationId, UserSubject("user-a")),
+            new MarkNotificationReadCommand(notificationId, UserSubject("user-a"), "tenant-a"),
             CancellationToken.None);
         Result<NotificationHistoryListResponse> unreadAfterOne = await dispatcher.QueryAsync(
-            new ListNotificationHistoryQuery(UserSubject("user-a"), UnreadOnly: true),
+            new ListNotificationHistoryQuery(UserSubject("user-a"), "tenant-a", UnreadOnly: true),
             CancellationToken.None);
         Result<MarkAllNotificationsReadResponse> markAll = await dispatcher.SendAsync(
-            new MarkAllNotificationsReadCommand(UserSubject("user-a")),
+            new MarkAllNotificationsReadCommand(UserSubject("user-a"), "tenant-a"),
             CancellationToken.None);
 
         Assert.True(markOne.IsSuccess);
@@ -127,7 +127,7 @@ public sealed class NotificationHistoryPersistenceTests
     [Fact]
     public async Task Stream_queries_use_monotonic_sequence_cursor()
     {
-        using IHost host = BuildHost(enabled: false, tenantId: "tenant-a");
+        using IHost host = BuildHost(enabled: false, scopeId: "tenant-a");
         using IServiceScope scope = host.Services.CreateScope();
         NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
         IRequestDispatcher dispatcher = scope.ServiceProvider.GetRequiredService<IRequestDispatcher>();
@@ -138,10 +138,10 @@ public sealed class NotificationHistoryPersistenceTests
         await dbContext.SaveChangesAsync();
 
         Result<long> userCursor = await dispatcher.QueryAsync(
-            new GetNotificationStreamCursorQuery(UserSubject("user-a")),
+            new GetNotificationStreamCursorQuery(UserSubject("user-a"), "tenant-a"),
             CancellationToken.None);
         Result<IReadOnlyList<NotificationHistoryItem>> userItems = await dispatcher.QueryAsync(
-            new StreamNotificationHistoryQuery(UserSubject("user-a"), AfterStreamSequence: 10, BatchSize: 10),
+            new StreamNotificationHistoryQuery(UserSubject("user-a"), "tenant-a", AfterStreamSequence: 10, BatchSize: 10),
             CancellationToken.None);
         Result<long> tenantCursor = await dispatcher.QueryAsync(
             new GetTenantNotificationStreamCursorQuery(null),
@@ -166,7 +166,7 @@ public sealed class NotificationHistoryPersistenceTests
     [Fact]
     public async Task User_history_policy_denies_wrong_user_and_wrong_tenant_without_leaking_item()
     {
-        using IHost host = BuildHost(enabled: false, tenantId: "tenant-a");
+        using IHost host = BuildHost(enabled: false, scopeId: "tenant-a");
         using IServiceScope scope = host.Services.CreateScope();
         NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
         IRequestDispatcher dispatcher = scope.ServiceProvider.GetRequiredService<IRequestDispatcher>();
@@ -175,16 +175,16 @@ public sealed class NotificationHistoryPersistenceTests
         await dbContext.SaveChangesAsync();
 
         Result<NotificationHistoryItem> wrongUser = await dispatcher.QueryAsync(
-            new GetNotificationHistoryItemQuery(notificationId, UserSubject("user-b")),
+            new GetNotificationHistoryItemQuery(notificationId, UserSubject("user-b"), "tenant-a"),
             CancellationToken.None);
         Result<Unit> wrongTenant = await dispatcher.SendAsync(
-            new MarkNotificationReadCommand(notificationId, UserSubject("user-a", "tenant-b")),
+            new MarkNotificationReadCommand(notificationId, UserSubject("user-a"), "tenant-b"),
             CancellationToken.None);
         Result<NotificationHistoryListResponse> wrongTenantList = await dispatcher.QueryAsync(
-            new ListNotificationHistoryQuery(UserSubject("user-a", "tenant-b")),
+            new ListNotificationHistoryQuery(UserSubject("user-a"), "tenant-b"),
             CancellationToken.None);
         Result<NotificationHistoryListResponse> userList = await dispatcher.QueryAsync(
-            new ListNotificationHistoryQuery(UserSubject("user-a")),
+            new ListNotificationHistoryQuery(UserSubject("user-a"), "tenant-a"),
             CancellationToken.None);
 
         Assert.True(wrongUser.IsFailure);
@@ -200,7 +200,7 @@ public sealed class NotificationHistoryPersistenceTests
     [Fact]
     public async Task Broadcast_queries_include_matching_tenant_and_platform_user_audiences()
     {
-        using IHost host = BuildHost(enabled: false, tenantId: "tenant-a");
+        using IHost host = BuildHost(enabled: false, scopeId: "tenant-a");
         using IServiceScope scope = host.Services.CreateScope();
         NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
         IRequestDispatcher dispatcher = scope.ServiceProvider.GetRequiredService<IRequestDispatcher>();
@@ -245,7 +245,7 @@ public sealed class NotificationHistoryPersistenceTests
     [Fact]
     public async Task Broadcast_read_receipts_are_per_recipient_and_idempotent()
     {
-        using IHost host = BuildHost(enabled: false, tenantId: "tenant-a");
+        using IHost host = BuildHost(enabled: false, scopeId: "tenant-a");
         using IServiceScope scope = host.Services.CreateScope();
         NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
         IRequestDispatcher dispatcher = scope.ServiceProvider.GetRequiredService<IRequestDispatcher>();
@@ -295,7 +295,7 @@ public sealed class NotificationHistoryPersistenceTests
     [Fact]
     public async Task Platform_broadcast_read_receipts_are_scoped_by_tenant_context()
     {
-        using IHost host = BuildHost(enabled: false, tenantId: "tenant-a");
+        using IHost host = BuildHost(enabled: false, scopeId: "tenant-a");
         using IServiceScope scope = host.Services.CreateScope();
         NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
         IRequestDispatcher dispatcher = scope.ServiceProvider.GetRequiredService<IRequestDispatcher>();
@@ -337,7 +337,7 @@ public sealed class NotificationHistoryPersistenceTests
     [Fact]
     public async Task Broadcast_mark_all_read_processes_visible_items_in_batches_and_is_idempotent()
     {
-        using IHost host = BuildHost(enabled: false, tenantId: "tenant-a");
+        using IHost host = BuildHost(enabled: false, scopeId: "tenant-a");
         using IServiceScope scope = host.Services.CreateScope();
         NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
         IRequestDispatcher dispatcher = scope.ServiceProvider.GetRequiredService<IRequestDispatcher>();
@@ -375,7 +375,7 @@ public sealed class NotificationHistoryPersistenceTests
     [Fact]
     public async Task Broadcast_stream_uses_admin_audience_visibility()
     {
-        using IHost host = BuildHost(enabled: false, tenantId: "tenant-a");
+        using IHost host = BuildHost(enabled: false, scopeId: "tenant-a");
         using IServiceScope scope = host.Services.CreateScope();
         NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
         IRequestDispatcher dispatcher = scope.ServiceProvider.GetRequiredService<IRequestDispatcher>();
@@ -416,7 +416,7 @@ public sealed class NotificationHistoryPersistenceTests
     [Fact]
     public async Task Create_broadcast_command_persists_through_unit_of_work()
     {
-        using IHost host = BuildHost(enabled: false, tenantId: "tenant-a");
+        using IHost host = BuildHost(enabled: false, scopeId: "tenant-a");
         using IServiceScope scope = host.Services.CreateScope();
         NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
         IRequestDispatcher dispatcher = scope.ServiceProvider.GetRequiredService<IRequestDispatcher>();
@@ -438,14 +438,14 @@ public sealed class NotificationHistoryPersistenceTests
         Assert.True(result.IsSuccess);
         NotificationBroadcast broadcast = Assert.Single(await dbContext.NotificationBroadcasts.ToArrayAsync());
         Assert.Equal(result.Value.BroadcastId, broadcast.Id);
-        Assert.Equal("tenant-a", broadcast.TenantId);
+        Assert.Equal("tenant-a", broadcast.ScopeId);
         Assert.Equal(DomainBroadcastAudience.TenantUsers, broadcast.Audience);
     }
 
-    private static IHost BuildHost(bool enabled, string tenantId)
+    private static IHost BuildHost(bool enabled, string scopeId)
     {
         HostApplicationBuilder builder = Host.CreateApplicationBuilder();
-        TestTenantContext tenantContext = new(tenantId);
+        TestTenantContext tenantContext = new(scopeId);
         InMemoryDatabaseRoot databaseRoot = new();
 
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
@@ -458,8 +458,8 @@ public sealed class NotificationHistoryPersistenceTests
         });
         builder.Services.TryAddSingleton<ISystemClock>(new FixedClock());
         builder.Services.TryAddSingleton<IIdGenerator, TestIdGenerator>();
-        builder.Services.TryAddSingleton<ITenantContext>(tenantContext);
-        builder.Services.TryAddSingleton<ITenantContextAccessor>(tenantContext);
+        builder.Services.TryAddSingleton<IScopeContext>(tenantContext);
+        builder.Services.TryAddSingleton<IScopeContextAccessor>(tenantContext);
         builder.Services.AddDbContext<NotificationsDbContext>(options =>
             options.UseInMemoryDatabase($"notifications-{Guid.NewGuid():N}", databaseRoot));
 
@@ -471,27 +471,27 @@ public sealed class NotificationHistoryPersistenceTests
         return builder.Build();
     }
 
-    private static NotificationsDbContext CreateDbContext(InMemoryDatabaseRoot databaseRoot, string tenantId)
+    private static NotificationsDbContext CreateDbContext(InMemoryDatabaseRoot databaseRoot, string scopeId)
     {
         DbContextOptions<NotificationsDbContext> options = new DbContextOptionsBuilder<NotificationsDbContext>()
             .UseInMemoryDatabase("notifications-tenant-filter", databaseRoot)
             .Options;
 
-        return new NotificationsDbContext(options, new TestTenantContext(tenantId));
+        return new NotificationsDbContext(options, new TestTenantContext(scopeId));
     }
 
-    private static AccessSubject UserSubject(string userId, string tenantId = "tenant-a") =>
-        AccessSubject.User(userId, tenantId);
+    private static AccessSubject UserSubject(string userId) =>
+        AccessSubject.User(userId);
 
     private static UserNotification CreateNotification(
-        string tenantId,
+        string scopeId,
         string userId,
         Guid? notificationId = null,
         long? streamSequence = null)
     {
         UserNotification notification = UserNotification.Create(
             notificationId ?? Guid.NewGuid(),
-            tenantId,
+            scopeId,
             userId,
             "catalog",
             "catalog.item-updated",
@@ -514,14 +514,14 @@ public sealed class NotificationHistoryPersistenceTests
     }
 
     private static NotificationBroadcast CreateBroadcast(
-        string? tenantId,
+        string? scopeId,
         NotificationBroadcastAudience audience,
         Guid broadcastId,
         long? streamSequence = null)
     {
         NotificationBroadcast broadcast = NotificationBroadcast.Create(
             broadcastId,
-            tenantId,
+            scopeId,
             ToDomainAudience(audience),
             "notifications",
             "system.maintenance",
@@ -563,14 +563,14 @@ public sealed class NotificationHistoryPersistenceTests
         public Guid NewId() => Guid.NewGuid();
     }
 
-    private sealed class TestTenantContext(string tenantId) : ITenantContextAccessor
+    private sealed class TestTenantContext(string scopeId) : IScopeContextAccessor
     {
         public bool IsEnabled => true;
-        public string? TenantId { get; private set; } = tenantId;
+        public string? ScopeId { get; private set; } = scopeId;
 
-        public void SetTenant(string tenantId) => this.TenantId = tenantId;
+        public void SetScope(string scopeId) => this.ScopeId = scopeId;
 
-        public void ClearTenant() => this.TenantId = null;
+        public void ClearScope() => this.ScopeId = null;
     }
 
     [NotificationName("catalog.item-updated")]

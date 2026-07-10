@@ -16,7 +16,7 @@ internal sealed class ListTenantNotificationBroadcastsQueryHandler(INotification
     {
         AdminNotificationBroadcastListResponse response = await repository
             .ListTenantBroadcastsAsync(
-                query.TenantId,
+                query.ScopeId,
                 PageRequest.Normalize(query.Page, query.PageSize),
                 cancellationToken)
             .ConfigureAwait(false);

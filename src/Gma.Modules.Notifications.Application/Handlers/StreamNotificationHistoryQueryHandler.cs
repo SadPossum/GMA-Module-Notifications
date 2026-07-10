@@ -15,7 +15,7 @@ internal sealed class StreamNotificationHistoryQueryHandler(
         StreamNotificationHistoryQuery query,
         CancellationToken cancellationToken)
     {
-        if (!NotificationHistoryAccess.CanAccessUserHistory(query.Subject, query.Subject.TenantId))
+        if (!NotificationHistoryAccess.CanAccessUserHistory(query.Subject))
         {
             return Result.Failure<IReadOnlyList<NotificationHistoryItem>>(NotificationsApplicationErrors.AccessDenied);
         }
@@ -23,6 +23,7 @@ internal sealed class StreamNotificationHistoryQueryHandler(
         IReadOnlyList<NotificationHistoryItem> items = await repository
             .ListNewForUserAsync(
                 query.Subject,
+                query.ScopeId,
                 query.AfterStreamSequence,
                 query.BatchSize,
                 cancellationToken)

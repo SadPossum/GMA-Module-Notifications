@@ -16,7 +16,7 @@ internal sealed class MarkNotificationBroadcastReadCommandHandler(
         CancellationToken cancellationToken)
     {
         Result<NotificationBroadcastRecipientContext> recipient =
-            NotificationBroadcastRecipientContext.Create(command.TenantId, command.RecipientKind, command.RecipientId);
+            NotificationBroadcastRecipientContext.Create(command.ScopeId, command.RecipientKind, command.RecipientId);
         if (recipient.IsFailure)
         {
             return Result.Failure<Unit>(recipient.Error);

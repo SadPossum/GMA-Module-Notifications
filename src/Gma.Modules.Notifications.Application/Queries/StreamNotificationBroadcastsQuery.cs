@@ -4,7 +4,7 @@ using Gma.Modules.Notifications.Contracts;
 using Gma.Framework.Cqrs;
 
 public sealed record StreamNotificationBroadcastsQuery(
-    string? TenantId,
+    string? ScopeId,
     NotificationBroadcastRecipientKind RecipientKind,
     string RecipientId,
     long AfterStreamSequence,

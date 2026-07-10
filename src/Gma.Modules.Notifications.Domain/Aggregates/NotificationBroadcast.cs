@@ -7,7 +7,7 @@ using Gma.Framework.Domain.Models;
 using Gma.Framework.Naming;
 using Gma.Framework.Results;
 
-[DisableTenantFilter("Broadcast visibility is evaluated by audience so platform records can appear in tenant-scoped feeds.")]
+[DisableScopeFilter("Broadcast visibility is evaluated by audience so platform records can appear in scope-aware feeds.")]
 public sealed class NotificationBroadcast : Entity<Guid>
 {
     public const int ModuleMaxLength = UserNotification.ModuleMaxLength;
@@ -23,7 +23,7 @@ public sealed class NotificationBroadcast : Entity<Guid>
     {
     }
 
-    public string? TenantId { get; private set; }
+    public string? ScopeId { get; private set; }
     public NotificationBroadcastAudience Audience { get; private set; }
     public NotificationSource Source { get; private set; } = null!;
     public NotificationContent Content { get; private set; } = null!;
@@ -35,7 +35,7 @@ public sealed class NotificationBroadcast : Entity<Guid>
 
     public static Result<NotificationBroadcast> Create(
         Guid id,
-        string? tenantId,
+        string? scopeId,
         NotificationBroadcastAudience audience,
         string module,
         string name,
@@ -57,15 +57,15 @@ public sealed class NotificationBroadcast : Entity<Guid>
             return Result.Failure<NotificationBroadcast>(NotificationsDomainErrors.BroadcastAudienceInvalid);
         }
 
-        string? normalizedTenantId = null;
+        string? normalizedScopeId = null;
         if (NotificationBroadcastAudienceNames.IsTenantScoped(audience))
         {
-            if (!TenantIds.TryNormalize(tenantId, out normalizedTenantId))
+            if (!ScopeIds.TryNormalize(scopeId, out normalizedScopeId))
             {
                 return Result.Failure<NotificationBroadcast>(NotificationsDomainErrors.TenantInvalid);
             }
         }
-        else if (!string.IsNullOrWhiteSpace(tenantId))
+        else if (!string.IsNullOrWhiteSpace(scopeId))
         {
             return Result.Failure<NotificationBroadcast>(NotificationsDomainErrors.PlatformBroadcastTenantForbidden);
         }
@@ -95,7 +95,7 @@ public sealed class NotificationBroadcast : Entity<Guid>
 
         NotificationBroadcast broadcast = new(id)
         {
-            TenantId = normalizedTenantId,
+            ScopeId = normalizedScopeId,
             Audience = audience,
             Source = source.Value,
             Content = content.Value,

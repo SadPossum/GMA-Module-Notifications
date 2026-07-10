@@ -5,7 +5,7 @@ using Gma.Framework.Cqrs;
 
 public sealed record CreateNotificationBroadcastCommand(
     NotificationBroadcastAudience Audience,
-    string? TenantId,
+    string? ScopeId,
     string Module,
     string Name,
     int Version,

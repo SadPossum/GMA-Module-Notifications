@@ -2,7 +2,7 @@ namespace Gma.Modules.Notifications.Contracts;
 
 using Gma.Framework.ModuleComposition;
 using Gma.Framework.Notifications;
-using Gma.Framework.Tenancy;
+using Gma.Framework.Scoping;
 
 public static class NotificationsProfiles
 {
@@ -19,12 +19,12 @@ public static class NotificationsProfiles
         requires:
         [
             new RequiredCompositionFeature(
-                TenancyCompositionFeatures.Context,
+                ScopeCompositionFeatures.Context,
                 Provider(DefaultName),
-                reason: "Notifications history and broadcast inboxes are tenant-aware; register TenancyModule or at least Gma.Framework.Tenancy.Infrastructure.")
+                reason: "Notifications history and broadcast inboxes are scope-aware; register scoping infrastructure or a tenancy bridge.")
         ],
         displayName: "Notifications default",
-        description: "Tenant-aware durable notification history, broadcasts, read state, and admin/public stream cursors.");
+        description: "Scope-aware durable notification history, broadcasts, read state, and admin/public stream cursors.");
 
     private static string Provider(string profileName) => $"{NotificationsModuleMetadata.Name}/{profileName}";
 }

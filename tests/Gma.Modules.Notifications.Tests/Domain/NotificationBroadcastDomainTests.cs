@@ -28,7 +28,7 @@ public sealed class NotificationBroadcastDomainTests
             "{ \"window\": \"night\" }");
 
         Assert.True(result.IsSuccess);
-        Assert.Equal("tenant-a", result.Value.TenantId);
+        Assert.Equal("tenant-a", result.Value.ScopeId);
         Assert.Equal(NotificationBroadcastAudience.TenantUsers, result.Value.Audience);
         Assert.Equal("notifications", result.Value.Source.Module);
         Assert.Equal("system.maintenance", result.Value.Source.Name);
