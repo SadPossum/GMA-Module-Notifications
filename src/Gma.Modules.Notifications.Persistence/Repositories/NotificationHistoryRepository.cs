@@ -21,7 +21,11 @@ internal sealed class NotificationHistoryRepository(NotificationsDbContext dbCon
     }
 
     public Task<bool> ExistsAsync(Guid notificationId, CancellationToken cancellationToken) =>
-        dbContext.UserNotifications.AnyAsync(notification => notification.Id == notificationId, cancellationToken);
+        dbContext.UserNotifications.Local.Any(notification => notification.Id == notificationId)
+            ? Task.FromResult(true)
+            : dbContext.UserNotifications.AnyAsync(
+                notification => notification.Id == notificationId,
+                cancellationToken);
 
     public async Task<NotificationHistoryItem?> GetAsync(
         Guid notificationId,

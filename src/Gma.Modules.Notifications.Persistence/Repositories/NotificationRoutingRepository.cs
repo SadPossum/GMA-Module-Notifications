@@ -22,6 +22,13 @@ internal sealed class NotificationRoutingRepository(NotificationsDbContext dbCon
         CancellationToken cancellationToken)
     {
         NotificationTagKey normalized = NotificationTagKey.Create(key).Value;
+        NotificationTagDefinition? tracked = dbContext.NotificationTagDefinitions.Local
+            .FirstOrDefault(definition => definition.Key == normalized);
+        if (tracked is not null)
+        {
+            return Task.FromResult<NotificationTagDefinition?>(tracked);
+        }
+
         return dbContext.NotificationTagDefinitions
             .FirstOrDefaultAsync(definition => definition.Key == normalized, cancellationToken);
     }

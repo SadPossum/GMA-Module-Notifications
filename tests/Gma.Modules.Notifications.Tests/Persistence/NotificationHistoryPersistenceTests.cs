@@ -13,6 +13,7 @@ using Gma.Framework.Scoping;
 using Gma.Modules.Notifications.Application;
 using Gma.Modules.Notifications.Application.Commands;
 using Gma.Modules.Notifications.Application.Queries;
+using Gma.Modules.Notifications.Application.Ports;
 using Gma.Modules.Notifications.Contracts;
 using Gma.Modules.Notifications.Domain.Aggregates;
 using Gma.Modules.Notifications.Domain.Entities;
@@ -74,6 +75,45 @@ public sealed class NotificationHistoryPersistenceTests
         Assert.Equal("catalog.item-updated", notification.Source.Name);
         Assert.Equal(DomainNotificationSeverity.Success, notification.Severity);
         Assert.Equal(/*lang=json,strict*/ "{\"sku\":\"SKU-1\"}", notification.Payload.Json);
+    }
+
+    [Fact]
+    public async Task Projector_reuses_pending_tag_definitions_across_a_fan_out_batch()
+    {
+        using IHost host = BuildHost(enabled: false, scopeId: "tenant-a");
+        using IServiceScope scope = host.Services.CreateScope();
+        IUserNotificationRequestProjector projector =
+            scope.ServiceProvider.GetRequiredService<IUserNotificationRequestProjector>();
+        NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
+        NotificationTag[] tags =
+        [
+            new(NotificationTags.Web, NotificationTagKind.Delivery),
+            new("domain:reservations", NotificationTagKind.Domain),
+        ];
+
+        foreach (string userId in new[] { "user-a", "user-b" })
+        {
+            await projector.ProjectAsync(
+                new UserNotificationRequestedIntegrationEventV2(
+                    Guid.CreateVersion7(),
+                    "tenant-a",
+                    Now,
+                    userId,
+                    "reservations",
+                    "reservation-confirmed",
+                    1,
+                    "Reservation confirmed",
+                    null,
+                    ContractNotificationSeverity.Success,
+                    "{}",
+                    tags),
+                CancellationToken.None);
+        }
+
+        await dbContext.SaveChangesAsync();
+
+        Assert.Equal(2, await dbContext.UserNotifications.CountAsync());
+        Assert.Equal(2, await dbContext.NotificationTagDefinitions.CountAsync());
     }
 
     [Fact]
