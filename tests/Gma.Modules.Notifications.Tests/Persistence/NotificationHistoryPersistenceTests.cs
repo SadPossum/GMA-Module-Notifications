@@ -1,31 +1,38 @@
 namespace Gma.Modules.Notifications.Tests;
 
+using Gma.Framework.AccessControl;
+using Gma.Framework.Cqrs;
+using Gma.Framework.Cqrs.Infrastructure;
+using Gma.Framework.Notifications;
+using Gma.Framework.Notifications.Infrastructure;
+using Gma.Framework.Results;
+using Gma.Framework.Realtime.Notifications;
+using Gma.Framework.Runtime.Identity;
+using Gma.Framework.Runtime.Time;
+using Gma.Framework.Scoping;
+using Gma.Modules.Notifications.Application;
+using Gma.Modules.Notifications.Application.Commands;
+using Gma.Modules.Notifications.Application.Queries;
+using Gma.Modules.Notifications.Contracts;
+using Gma.Modules.Notifications.Domain.Aggregates;
+using Gma.Modules.Notifications.Domain.Entities;
+using Gma.Modules.Notifications.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
-using Gma.Modules.Notifications.Application;
-using Gma.Modules.Notifications.Application.Commands;
-using Gma.Modules.Notifications.Application.Queries;
-using Gma.Modules.Notifications.Contracts;
-using Gma.Modules.Notifications.Domain.Aggregates;
-using Gma.Modules.Notifications.Persistence;
-using Gma.Framework.AccessControl;
-using Gma.Framework.Cqrs;
-using Gma.Framework.Cqrs.Infrastructure;
-using Gma.Framework.Notifications;
-using Gma.Framework.Notifications.Infrastructure;
-using Gma.Framework.Scoping;
-using Gma.Framework.Results;
-using Gma.Framework.Runtime.Identity;
-using Gma.Framework.Runtime.Time;
 using Xunit;
-using DomainBroadcastAudience = Gma.Modules.Notifications.Domain.ValueObjects.NotificationBroadcastAudience;
-using DomainNotificationSeverity = Gma.Modules.Notifications.Domain.ValueObjects.NotificationSeverity;
-using ContractNotificationSeverity = Gma.Modules.Notifications.Contracts.NotificationSeverity;
-using FrameworkNotificationSeverity = Gma.Framework.Notifications.NotificationSeverity;
+using ContractNotificationSeverity = Notifications.Contracts.NotificationSeverity;
+using DomainBroadcastAudience = Domain.ValueObjects.NotificationBroadcastAudience;
+using DomainDeliveryAttemptOutcome = Domain.ValueObjects.NotificationDeliveryAttemptOutcome;
+using DomainDeliveryPolicy = Domain.ValueObjects.NotificationDeliveryPolicy;
+using DomainDeliveryStatus = Domain.ValueObjects.NotificationDeliveryStatus;
+using DomainNotificationSeverity = Domain.ValueObjects.NotificationSeverity;
+using DomainTagKind = Domain.ValueObjects.NotificationTagKind;
+using DomainTagOrigin = Domain.ValueObjects.NotificationTagOrigin;
+using FrameworkNotificationSeverity = Framework.Notifications.NotificationSeverity;
 
 [Trait("Category", "Unit")]
 public sealed class NotificationHistoryPersistenceTests
@@ -66,7 +73,56 @@ public sealed class NotificationHistoryPersistenceTests
         Assert.Equal("user-a", notification.Recipient.UserId);
         Assert.Equal("catalog.item-updated", notification.Source.Name);
         Assert.Equal(DomainNotificationSeverity.Success, notification.Severity);
-        Assert.Equal("{\"sku\":\"SKU-1\"}", notification.Payload.Json);
+        Assert.Equal(/*lang=json,strict*/ "{\"sku\":\"SKU-1\"}", notification.Payload.Json);
+    }
+
+    [Fact]
+    public async Task Publisher_respects_persisted_web_preference_before_best_effort_delivery()
+    {
+        using IHost host = BuildHost(enabled: true, scopeId: "tenant-a");
+        using IServiceScope scope = host.Services.CreateScope();
+        NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
+        NotificationTagDefinition webDefinition = NotificationTagDefinition.Create(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            NotificationTags.Web,
+            DomainTagKind.Delivery,
+            "Web inbox",
+            "Stores the notification in the durable web inbox.",
+            DomainTagOrigin.System,
+            "notifications",
+            "test",
+            Now).Value;
+        NotificationPreference preference = NotificationPreference.Create(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            "user-a",
+            NotificationTags.Web,
+            enabled: false,
+            nowUtc: Now).Value;
+        dbContext.NotificationTagDefinitions.Add(webDefinition);
+        dbContext.NotificationPreferences.Add(preference);
+        await dbContext.SaveChangesAsync();
+        IUserNotificationFeed feed = scope.ServiceProvider.GetRequiredService<IUserNotificationFeed>();
+        UserNotificationTarget target = UserNotificationTarget.User("tenant-a", "user-a");
+        await using IUserNotificationSubscription subscription = feed.Subscribe(target);
+        IUserNotificationPublisher publisher = scope.ServiceProvider.GetRequiredService<IUserNotificationPublisher>();
+
+        await publisher.PublishAsync(
+            "catalog",
+            target,
+            new SampleNotificationPayload("SKU-1"),
+            new NotificationPublishOptions("Item updated"));
+
+        using CancellationTokenSource timeout = new(TimeSpan.FromMilliseconds(150));
+        await using IAsyncEnumerator<UserNotificationMessage> messages =
+            subscription.ReadAllAsync(timeout.Token).GetAsyncEnumerator(timeout.Token);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await messages.MoveNextAsync().AsTask());
+        UserNotification notification = Assert.Single(await dbContext.UserNotifications.ToArrayAsync());
+        NotificationDelivery delivery = Assert.Single(await dbContext.NotificationDeliveries.ToArrayAsync());
+        Assert.False(notification.IsInboxVisible);
+        Assert.Equal(DomainDeliveryStatus.Suppressed, delivery.Status);
     }
 
     [Fact]
@@ -442,6 +498,154 @@ public sealed class NotificationHistoryPersistenceTests
         Assert.Equal(DomainBroadcastAudience.TenantUsers, broadcast.Audience);
     }
 
+    [Fact]
+    public async Task Email_only_intents_stay_out_of_inbox_while_visible_history_exposes_tags_and_policy()
+    {
+        using IHost host = BuildHost(enabled: false, scopeId: "tenant-a");
+        using IServiceScope scope = host.Services.CreateScope();
+        NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
+        IRequestDispatcher dispatcher = scope.ServiceProvider.GetRequiredService<IRequestDispatcher>();
+        UserNotification hidden = UserNotification.Create(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            "user-a",
+            "auth",
+            "account.signed-in",
+            1,
+            "Account signed in",
+            null,
+            DomainNotificationSeverity.Warning,
+            Now,
+            Now,
+            "{}",
+            ["delivery:email", "domain:security"],
+            DomainDeliveryPolicy.Mandatory,
+            isInboxVisible: false).Value;
+        UserNotification visible = UserNotification.Create(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            "user-a",
+            "catalog",
+            "catalog.item-updated",
+            1,
+            "Item updated",
+            null,
+            DomainNotificationSeverity.Info,
+            Now,
+            Now,
+            "{}",
+            ["delivery:web", "domain:catalog"],
+            DomainDeliveryPolicy.RespectPreferences,
+            isInboxVisible: true).Value;
+        dbContext.UserNotifications.AddRange(hidden, visible);
+        await dbContext.SaveChangesAsync();
+
+        Result<NotificationHistoryListResponse> userHistory = await dispatcher.QueryAsync(
+            new ListNotificationHistoryQuery(UserSubject("user-a"), "tenant-a"),
+            CancellationToken.None);
+        Result<AdminNotificationHistoryListResponse> adminHistory = await dispatcher.QueryAsync(
+            new ListTenantNotificationHistoryQuery(),
+            CancellationToken.None);
+
+        Assert.Equal(2, await dbContext.UserNotifications.CountAsync());
+        NotificationHistoryItem userItem = Assert.Single(userHistory.Value.Items);
+        Assert.Equal(visible.Id, userItem.Id);
+        Assert.Equal(["delivery:web", "domain:catalog"], userItem.Tags);
+        Assert.Equal(Notifications.Contracts.NotificationDeliveryPolicy.RespectPreferences, userItem.DeliveryPolicy);
+        Assert.Equal(visible.Id, Assert.Single(adminHistory.Value.Items).NotificationId);
+    }
+
+    [Fact]
+    public async Task Retention_does_not_delete_notification_content_needed_by_active_deliveries()
+    {
+        using IHost host = BuildHost(enabled: false, scopeId: "tenant-a");
+        using IServiceScope scope = host.Services.CreateScope();
+        NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
+        DateTimeOffset old = Now.AddDays(-400);
+        UserNotification active = UserNotification.Create(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            "user-a",
+            "auth",
+            "account.signed-in",
+            1,
+            "Account signed in",
+            null,
+            DomainNotificationSeverity.Warning,
+            old,
+            old,
+            "{}",
+            ["delivery:email"],
+            DomainDeliveryPolicy.Mandatory,
+            isInboxVisible: false).Value;
+        UserNotification completed = UserNotification.Create(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            "user-a",
+            "catalog",
+            "catalog.item-updated",
+            1,
+            "Item updated",
+            null,
+            DomainNotificationSeverity.Info,
+            old,
+            old,
+            "{}",
+            ["delivery:email"],
+            DomainDeliveryPolicy.RespectPreferences,
+            isInboxVisible: false).Value;
+        NotificationDelivery pending = NotificationDelivery.CreatePending(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            active.Id,
+            "delivery:email",
+            "email-primary",
+            old).Value;
+        NotificationDelivery delivered = NotificationDelivery.CreateDelivered(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            completed.Id,
+            "delivery:email",
+            "email-primary",
+            old).Value;
+        NotificationDeliveryAttempt pendingAttempt = NotificationDeliveryAttempt.Create(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            pending.Id,
+            1,
+            "email-primary",
+            DomainDeliveryAttemptOutcome.Retry,
+            old,
+            old.AddSeconds(1),
+            "rate-limited",
+            providerMessageId: null).Value;
+        NotificationDeliveryAttempt deliveredAttempt = NotificationDeliveryAttempt.Create(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            delivered.Id,
+            1,
+            "email-primary",
+            DomainDeliveryAttemptOutcome.Delivered,
+            old,
+            old.AddSeconds(1),
+            code: null,
+            providerMessageId: "provider-message-1").Value;
+        dbContext.UserNotifications.AddRange(active, completed);
+        dbContext.NotificationDeliveries.AddRange(pending, delivered);
+        dbContext.NotificationDeliveryAttempts.AddRange(pendingAttempt, deliveredAttempt);
+        await dbContext.SaveChangesAsync();
+
+        UserNotification[] expired = await NotificationRetentionService
+            .ExpiredUserNotifications(dbContext, Now.AddDays(-90), Now.AddDays(-365))
+            .ToArrayAsync();
+        NotificationDeliveryAttempt[] expiredAttempts = await NotificationRetentionService
+            .ExpiredDeliveryAttempts(dbContext, Now.AddDays(-90))
+            .ToArrayAsync();
+
+        Assert.Equal(completed.Id, Assert.Single(expired).Id);
+        Assert.Equal(deliveredAttempt.Id, Assert.Single(expiredAttempts).Id);
+    }
+
     private static IHost BuildHost(bool enabled, string scopeId)
     {
         HostApplicationBuilder builder = Host.CreateApplicationBuilder();
@@ -464,6 +668,7 @@ public sealed class NotificationHistoryPersistenceTests
             options.UseInMemoryDatabase($"notifications-{Guid.NewGuid():N}", databaseRoot));
 
         builder.AddUserNotificationsInfrastructure();
+        builder.AddUserNotificationsRealtime();
         builder.AddCqrsInfrastructure();
         builder.Services.AddNotificationsApplication();
         builder.AddNotificationsPersistence();

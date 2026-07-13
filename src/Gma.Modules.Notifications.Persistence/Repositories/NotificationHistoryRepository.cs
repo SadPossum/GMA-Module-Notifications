@@ -1,15 +1,17 @@
 namespace Gma.Modules.Notifications.Persistence.Repositories;
 
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
+using Gma.Framework.AccessControl;
+using Gma.Framework.Pagination;
 using Gma.Modules.Notifications.Application.Ports;
 using Gma.Modules.Notifications.Contracts;
 using Gma.Modules.Notifications.Domain.Aggregates;
 using Gma.Modules.Notifications.Domain.ValueObjects;
-using Gma.Framework.AccessControl;
-using Gma.Framework.Pagination;
-using ContractSeverity = Gma.Modules.Notifications.Contracts.NotificationSeverity;
-using DomainSeverity = Gma.Modules.Notifications.Domain.ValueObjects.NotificationSeverity;
+using Microsoft.EntityFrameworkCore;
+using ContractDeliveryPolicy = Contracts.NotificationDeliveryPolicy;
+using ContractSeverity = Contracts.NotificationSeverity;
+using DomainDeliveryPolicy = Domain.ValueObjects.NotificationDeliveryPolicy;
+using DomainSeverity = Domain.ValueObjects.NotificationSeverity;
 
 internal sealed class NotificationHistoryRepository(NotificationsDbContext dbContext) : INotificationHistoryRepository
 {
@@ -28,6 +30,7 @@ internal sealed class NotificationHistoryRepository(NotificationsDbContext dbCon
         CancellationToken cancellationToken)
     {
         UserNotification? notification = await ApplyUserSubjectScope(dbContext.UserNotifications, subject, scopeId)
+            .Include(item => item.Tags)
             .AsNoTracking()
             .FirstOrDefaultAsync(
                 item => item.Id == notificationId,
@@ -42,6 +45,8 @@ internal sealed class NotificationHistoryRepository(NotificationsDbContext dbCon
         CancellationToken cancellationToken)
     {
         UserNotification? notification = await dbContext.UserNotifications
+            .Where(item => item.IsInboxVisible)
+            .Include(item => item.Tags)
             .AsNoTracking()
             .FirstOrDefaultAsync(
                 item => item.Id == notificationId,
@@ -59,6 +64,7 @@ internal sealed class NotificationHistoryRepository(NotificationsDbContext dbCon
         CancellationToken cancellationToken)
     {
         IQueryable<UserNotification> userNotifications = ApplyUserSubjectScope(dbContext.UserNotifications, subject, scopeId)
+            .Include(item => item.Tags)
             .AsNoTracking();
 
         int unreadCount = await userNotifications
@@ -93,7 +99,10 @@ internal sealed class NotificationHistoryRepository(NotificationsDbContext dbCon
         PageRequest pageRequest,
         CancellationToken cancellationToken)
     {
-        IQueryable<UserNotification> notifications = dbContext.UserNotifications.AsNoTracking();
+        IQueryable<UserNotification> notifications = dbContext.UserNotifications
+            .Where(notification => notification.IsInboxVisible)
+            .Include(notification => notification.Tags)
+            .AsNoTracking();
 
         if (!string.IsNullOrWhiteSpace(userId))
         {
@@ -143,7 +152,9 @@ internal sealed class NotificationHistoryRepository(NotificationsDbContext dbCon
         string? userId,
         CancellationToken cancellationToken)
     {
-        IQueryable<UserNotification> query = dbContext.UserNotifications.AsNoTracking();
+        IQueryable<UserNotification> query = dbContext.UserNotifications
+            .Where(notification => notification.IsInboxVisible)
+            .AsNoTracking();
         if (!string.IsNullOrWhiteSpace(userId))
         {
             NotificationRecipient recipient = NormalizeRecipient(userId);
@@ -165,6 +176,7 @@ internal sealed class NotificationHistoryRepository(NotificationsDbContext dbCon
         CancellationToken cancellationToken)
     {
         UserNotification[] items = await ApplyUserSubjectScope(dbContext.UserNotifications, subject, scopeId)
+            .Include(item => item.Tags)
             .AsNoTracking()
             .Where(notification =>
                 notification.StreamSequence > afterStreamSequence)
@@ -182,7 +194,10 @@ internal sealed class NotificationHistoryRepository(NotificationsDbContext dbCon
         int batchSize,
         CancellationToken cancellationToken)
     {
-        IQueryable<UserNotification> query = dbContext.UserNotifications.AsNoTracking();
+        IQueryable<UserNotification> query = dbContext.UserNotifications
+            .Where(notification => notification.IsInboxVisible)
+            .Include(notification => notification.Tags)
+            .AsNoTracking();
         if (!string.IsNullOrWhiteSpace(userId))
         {
             NotificationRecipient recipient = NormalizeRecipient(userId);
@@ -265,7 +280,9 @@ internal sealed class NotificationHistoryRepository(NotificationsDbContext dbCon
             notification.OccurredAtUtc,
             notification.CreatedAtUtc,
             notification.ReadAtUtc,
-            document.RootElement.Clone());
+            document.RootElement.Clone(),
+            notification.Tags.Select(tag => tag.Key.Value).Order(StringComparer.Ordinal).ToArray(),
+            ToContractDeliveryPolicy(notification.DeliveryPolicy));
     }
 
     private static AdminNotificationHistoryItem MapAdmin(UserNotification notification)
@@ -285,7 +302,9 @@ internal sealed class NotificationHistoryRepository(NotificationsDbContext dbCon
             notification.OccurredAtUtc,
             notification.CreatedAtUtc,
             notification.ReadAtUtc,
-            document.RootElement.Clone());
+            document.RootElement.Clone(),
+            notification.Tags.Select(tag => tag.Key.Value).Order(StringComparer.Ordinal).ToArray(),
+            ToContractDeliveryPolicy(notification.DeliveryPolicy));
     }
 
     private static NotificationRecipient NormalizeRecipient(string userId) =>
@@ -297,7 +316,9 @@ internal sealed class NotificationHistoryRepository(NotificationsDbContext dbCon
         string? scopeId)
     {
         NotificationRecipient recipient = NormalizeRecipient(subject.Id);
-        query = query.Where(notification => notification.Recipient == recipient);
+        query = query.Where(notification =>
+            notification.IsInboxVisible &&
+            notification.Recipient == recipient);
 
         return string.IsNullOrWhiteSpace(scopeId)
             ? query
@@ -312,5 +333,13 @@ internal sealed class NotificationHistoryRepository(NotificationsDbContext dbCon
             DomainSeverity.Warning => ContractSeverity.Warning,
             DomainSeverity.Error => ContractSeverity.Error,
             _ => ContractSeverity.Unknown
+        };
+
+    private static ContractDeliveryPolicy ToContractDeliveryPolicy(DomainDeliveryPolicy policy) =>
+        policy switch
+        {
+            DomainDeliveryPolicy.RespectPreferences => ContractDeliveryPolicy.RespectPreferences,
+            DomainDeliveryPolicy.Mandatory => ContractDeliveryPolicy.Mandatory,
+            _ => ContractDeliveryPolicy.Unknown
         };
 }

@@ -3,24 +3,6 @@ namespace Gma.Modules.Notifications.Contracts;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-public sealed class NotificationSeverityJsonConverter : JsonConverter<NotificationSeverity>
-{
-    public override NotificationSeverity Read(
-        ref Utf8JsonReader reader,
-        Type typeToConvert,
-        JsonSerializerOptions options) =>
-        NotificationContractEnumJson.ReadString(
-            ref reader,
-            "Notification severity",
-            NotificationContractEnumJson.ParseSeverity);
-
-    public override void Write(
-        Utf8JsonWriter writer,
-        NotificationSeverity value,
-        JsonSerializerOptions options) =>
-        writer.WriteStringValue(NotificationContractEnumJson.FormatSeverity(value));
-}
-
 internal static class NotificationContractEnumJson
 {
     public static TEnum ReadString<TEnum>(
@@ -67,6 +49,101 @@ internal static class NotificationContractEnumJson
             NotificationSeverity.Error => "error",
             _ => throw new JsonException("Notification severity is invalid.")
         };
+
+    public static NotificationTagKind? ParseTagKind(string? value) =>
+        Normalize(value) switch
+        {
+            "delivery" => NotificationTagKind.Delivery,
+            "domain" => NotificationTagKind.Domain,
+            _ => null
+        };
+
+    public static string FormatTagKind(NotificationTagKind kind) =>
+        kind switch
+        {
+            NotificationTagKind.Delivery => "delivery",
+            NotificationTagKind.Domain => "domain",
+            _ => throw new JsonException("Notification tag kind is invalid.")
+        };
+
+    public static NotificationDeliveryPolicy? ParseDeliveryPolicy(string? value) =>
+        Normalize(value) switch
+        {
+            "respect-preferences" => NotificationDeliveryPolicy.RespectPreferences,
+            "mandatory" => NotificationDeliveryPolicy.Mandatory,
+            _ => null
+        };
+
+    public static string FormatDeliveryPolicy(NotificationDeliveryPolicy policy) =>
+        policy switch
+        {
+            NotificationDeliveryPolicy.RespectPreferences => "respect-preferences",
+            NotificationDeliveryPolicy.Mandatory => "mandatory",
+            _ => throw new JsonException("Notification delivery policy is invalid.")
+        };
+
+    public static NotificationTagOrigin? ParseTagOrigin(string? value) =>
+        Normalize(value) switch
+        {
+            "system" => NotificationTagOrigin.System,
+            "module" => NotificationTagOrigin.Module,
+            "operator" => NotificationTagOrigin.Operator,
+            _ => null
+        };
+
+    public static string FormatTagOrigin(NotificationTagOrigin origin) => origin switch
+    {
+        NotificationTagOrigin.System => "system",
+        NotificationTagOrigin.Module => "module",
+        NotificationTagOrigin.Operator => "operator",
+        _ => throw new JsonException("Notification tag origin is invalid.")
+    };
+
+    public static NotificationDeliveryStatus? ParseDeliveryStatus(string? value) =>
+        Normalize(value) switch
+        {
+            "pending" => NotificationDeliveryStatus.Pending,
+            "processing" => NotificationDeliveryStatus.Processing,
+            "retry-scheduled" => NotificationDeliveryStatus.RetryScheduled,
+            "delivered" => NotificationDeliveryStatus.Delivered,
+            "rejected" => NotificationDeliveryStatus.Rejected,
+            "exhausted" => NotificationDeliveryStatus.Exhausted,
+            "suppressed" => NotificationDeliveryStatus.Suppressed,
+            "unroutable" => NotificationDeliveryStatus.Unroutable,
+            _ => null
+        };
+
+    public static string FormatDeliveryStatus(NotificationDeliveryStatus status) => status switch
+    {
+        NotificationDeliveryStatus.Pending => "pending",
+        NotificationDeliveryStatus.Processing => "processing",
+        NotificationDeliveryStatus.RetryScheduled => "retry-scheduled",
+        NotificationDeliveryStatus.Delivered => "delivered",
+        NotificationDeliveryStatus.Rejected => "rejected",
+        NotificationDeliveryStatus.Exhausted => "exhausted",
+        NotificationDeliveryStatus.Suppressed => "suppressed",
+        NotificationDeliveryStatus.Unroutable => "unroutable",
+        _ => throw new JsonException("Notification delivery status is invalid.")
+    };
+
+    public static NotificationDeliveryAttemptOutcome? ParseDeliveryAttemptOutcome(string? value) =>
+        Normalize(value) switch
+        {
+            "delivered" => NotificationDeliveryAttemptOutcome.Delivered,
+            "retry" => NotificationDeliveryAttemptOutcome.Retry,
+            "rejected" => NotificationDeliveryAttemptOutcome.Rejected,
+            "exception" => NotificationDeliveryAttemptOutcome.Exception,
+            _ => null
+        };
+
+    public static string FormatDeliveryAttemptOutcome(NotificationDeliveryAttemptOutcome outcome) => outcome switch
+    {
+        NotificationDeliveryAttemptOutcome.Delivered => "delivered",
+        NotificationDeliveryAttemptOutcome.Retry => "retry",
+        NotificationDeliveryAttemptOutcome.Rejected => "rejected",
+        NotificationDeliveryAttemptOutcome.Exception => "exception",
+        _ => throw new JsonException("Notification delivery attempt outcome is invalid.")
+    };
 
     public static NotificationBroadcastAudience? ParseAudience(string? value)
     {

@@ -137,6 +137,251 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
                     b.ToTable("notification_broadcasts", "notifications");
                 });
 
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Aggregates.NotificationDelivery", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ConcurrencyStamp")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("DeliveredAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DeliveryTag")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("DeliveryTag");
+
+                    b.Property<string>("LastCode")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("LockedBy")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset?>("LockedUntilUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("MaxAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("NextAttemptAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("NotificationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("ProviderMessageId")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<string>("ScopeId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NotificationId");
+
+                    b.HasIndex("ScopeId", "Status", "CreatedAtUtc");
+
+                    b.HasIndex("ScopeId", "NotificationId", "DeliveryTag", "Provider")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "NextAttemptAtUtc", "LockedUntilUtc", "CreatedAtUtc");
+
+                    b.ToTable("deliveries", "notifications");
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Aggregates.NotificationDeliveryRoute", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DeliveryTag")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("DeliveryTag");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("ScopeId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ScopeId", "DeliveryTag")
+                        .IsUnique();
+
+                    b.HasIndex("ScopeId", "Provider", "IsActive");
+
+                    b.ToTable("delivery_routes", "notifications");
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Aggregates.NotificationPreference", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ScopeId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("TagKey")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("TagKey");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ScopeId", "UserId", "Enabled");
+
+                    b.HasIndex("ScopeId", "UserId", "TagKey")
+                        .IsUnique();
+
+                    b.ToTable("preferences", "notifications");
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Aggregates.NotificationTagDefinition", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("TagKey");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Owner")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("ScopeId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ScopeId", "Key")
+                        .IsUnique();
+
+                    b.HasIndex("ScopeId", "Kind", "IsActive", "Key");
+
+                    b.ToTable("tag_definitions", "notifications");
+                });
+
             modelBuilder.Entity("Gma.Modules.Notifications.Domain.Aggregates.UserNotification", b =>
                 {
                     b.Property<Guid>("Id")
@@ -145,6 +390,18 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DeliveryPolicy")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("respect-preferences");
+
+                    b.Property<bool>("IsInboxVisible")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
 
                     b.Property<DateTimeOffset>("OccurredAtUtc")
                         .HasColumnType("timestamp with time zone");
@@ -184,6 +441,8 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("ScopeId", "StreamSequence");
+
+                    b.HasIndex("ScopeId", "IsInboxVisible", "CreatedAtUtc");
 
                     b.HasIndex("ScopeId", "Recipient", "OccurredAtUtc");
 
@@ -231,6 +490,82 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
                     b.HasIndex("RecipientScope", "RecipientKind", "Recipient", "BroadcastId");
 
                     b.ToTable("notification_broadcast_reads", "notifications");
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.NotificationDeliveryAttempt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AttemptNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Code")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTimeOffset>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("DeliveryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("ProviderMessageId")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<string>("ScopeId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTimeOffset>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DeliveryId");
+
+                    b.HasIndex("ScopeId", "CompletedAtUtc");
+
+                    b.HasIndex("ScopeId", "DeliveryId", "AttemptNumber")
+                        .IsUnique();
+
+                    b.ToTable("delivery_attempts", "notifications");
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.UserNotificationTag", b =>
+                {
+                    b.Property<string>("ScopeId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("NotificationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Key")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("TagKey");
+
+                    b.HasKey("ScopeId", "NotificationId", "Key");
+
+                    b.HasIndex("NotificationId");
+
+                    b.HasIndex("ScopeId", "Key", "NotificationId");
+
+                    b.ToTable("user_notification_tags", "notifications");
                 });
 
             modelBuilder.Entity("Gma.Modules.Notifications.Domain.Aggregates.NotificationBroadcast", b =>
@@ -297,6 +632,15 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Aggregates.NotificationDelivery", b =>
+                {
+                    b.HasOne("Gma.Modules.Notifications.Domain.Aggregates.UserNotification", null)
+                        .WithMany()
+                        .HasForeignKey("NotificationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Gma.Modules.Notifications.Domain.Aggregates.UserNotification", b =>
                 {
                     b.OwnsOne("Gma.Modules.Notifications.Domain.ValueObjects.NotificationContent", "Content", b1 =>
@@ -359,6 +703,29 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
 
                     b.Navigation("Source")
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.NotificationDeliveryAttempt", b =>
+                {
+                    b.HasOne("Gma.Modules.Notifications.Domain.Aggregates.NotificationDelivery", null)
+                        .WithMany()
+                        .HasForeignKey("DeliveryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.UserNotificationTag", b =>
+                {
+                    b.HasOne("Gma.Modules.Notifications.Domain.Aggregates.UserNotification", null)
+                        .WithMany("Tags")
+                        .HasForeignKey("NotificationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Aggregates.UserNotification", b =>
+                {
+                    b.Navigation("Tags");
                 });
 #pragma warning restore 612, 618
         }

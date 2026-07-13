@@ -1,14 +1,15 @@
 namespace Gma.Modules.Notifications.Application;
 
+using Gma.Framework.Application.Composition;
+using Gma.Framework.Messaging;
+using Gma.Framework.Notifications;
+using Gma.Modules.Notifications.Application.Handlers;
+using Gma.Modules.Notifications.Application.Ports;
+using Gma.Modules.Notifications.Contracts;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
-using Gma.Modules.Notifications.Application.Handlers;
-using Gma.Modules.Notifications.Contracts;
-using Gma.Framework.Application.Composition;
-using Gma.Framework.Messaging;
-using Gma.Modules.Notifications.Application.Ports;
 
 public static class DependencyInjection
 {
@@ -40,7 +41,22 @@ public static class DependencyInjection
         }
 
         services.AddApplicationServicesFromAssembly(typeof(DependencyInjection).Assembly);
+        services.TryAddScoped<UserNotificationRequestedIntegrationEventV2Handler>();
+        services.TryAddScoped<IUserNotificationRequestProjector>(provider =>
+            provider.GetRequiredService<UserNotificationRequestedIntegrationEventV2Handler>());
         services.TryAddSingleton<INotificationPreferenceEvaluator, AllowAllNotificationPreferenceEvaluator>();
+        services.TryAddEnumerable(ServiceDescriptor.Scoped<
+            IUserNotificationDeliveryPolicyEvaluator,
+            NotificationBestEffortDeliveryPolicyEvaluator>());
+        services.TryAddSingleton<INotificationDeliveryAdapterCatalog, NotificationDeliveryAdapterCatalog>();
+        OptionsBuilder<NotificationDeliveryOptions> deliveryOptions = services.AddOptions<NotificationDeliveryOptions>();
+        if (configuration is not null)
+        {
+            deliveryOptions.Bind(configuration.GetSection(NotificationDeliveryOptions.SectionName));
+        }
+        deliveryOptions.ValidateOnStart();
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IValidateOptions<NotificationDeliveryOptions>, NotificationDeliveryOptionsValidator>());
 
         return services;
     }
@@ -64,6 +80,12 @@ public static class DependencyInjection
             UserNotificationRequestedIntegrationEvent.EventType,
             UserNotificationRequestedIntegrationEvent.EventVersion,
             normalizedHandlerName);
+        services.AddIntegrationEventHandler<UserNotificationRequestedIntegrationEventV2, UserNotificationRequestedIntegrationEventV2Handler>(
+            NotificationsModuleMetadata.Name,
+            normalizedProducerModule,
+            UserNotificationRequestedIntegrationEventV2.EventType,
+            UserNotificationRequestedIntegrationEventV2.EventVersion,
+            $"{normalizedHandlerName}-v2");
 
         return services;
     }

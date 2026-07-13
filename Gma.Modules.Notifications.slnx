@@ -24,6 +24,9 @@
     <Project Path="src/Gma.Modules.Notifications.Admin.Contracts/Gma.Modules.Notifications.Admin.Contracts.csproj" />
     <Project Path="src/Gma.Modules.Notifications.AdminApi/Gma.Modules.Notifications.AdminApi.csproj" />
   </Folder>
+  <Folder Name="/src/Adapters/">
+    <Project Path="src/Gma.Modules.Notifications.Adapters.Email/Gma.Modules.Notifications.Adapters.Email.csproj" />
+  </Folder>
   <Folder Name="/src/Api/">
     <Project Path="src/Gma.Modules.Notifications.Api/Gma.Modules.Notifications.Api.csproj" />
   </Folder>

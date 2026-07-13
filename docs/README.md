@@ -1,6 +1,8 @@
 # Notifications Module
 
-The `Notifications` module is an optional durable history/read-state module for user-facing notifications. It complements the shared notification publisher, realtime bridge, and SSE/SignalR live-delivery adapters; it is not a backend event bus and it is not a replacement for module integration events.
+The optional Notifications module owns durable, addressed user notifications. It stores inbox history and read state, persists a tenant-scoped tag catalog and user preferences, plans durable adapter deliveries, records immutable attempts/receipts, and exposes user and operator APIs. It also owns durable audience broadcasts.
+
+Notifications are not a backend event bus or an authorization engine. Producer modules decide the recipient and semantic intent. Integration events and the source module outbox remain the authoritative durable business path.
 
 ## Projects
 
@@ -14,157 +16,222 @@ Gma.Modules.Notifications.Persistence.PostgreSqlMigrations
 Gma.Modules.Notifications.Api
 Gma.Modules.Notifications.Admin.Contracts
 Gma.Modules.Notifications.AdminApi
+Gma.Modules.Notifications.Adapters.Email
 ```
 
-The module is not registered in the default hosts. Applications compose the user API and admin API explicitly when they need notification history.
+`NotificationsProfiles.Default` provides the `history`, `broadcasts`, `preferences`, `routing`, and `durable-delivery` composition features and requires scope context. Applications explicitly select the API/admin surfaces and any delivery adapters they need. Realtime SSE/SignalR remains a separately composed, best-effort framework concern.
 
-`NotificationsProfiles.Default` is selected by both `Gma.Modules.Notifications.Api` and `Gma.Modules.Notifications.AdminApi`. It provides the `notifications.history` and `notifications.broadcasts` composition features and requires scope context. Live SSE/SignalR delivery is still host-selected through `Gma.Framework.Realtime.Notifications` plus the shared notification adapters, not implied by the durable module profile.
+## Tagged Notification Contract
+
+New producers should publish `UserNotificationRequestedIntegrationEventV2`. It preserves the V1 event name with contract version `2` and adds:
+
+- typed tags;
+- `respect-preferences` or `mandatory` delivery policy;
+- stable lowercase string JSON representations.
+
+Tags have two deliberately separate namespaces:
+
+- `delivery:*` selects an inbox or delivery pipeline, for example `delivery:web`, `delivery:email`, `delivery:push`, or `delivery:sms`;
+- `domain:*` describes product meaning, for example `domain:security`, `domain:order-updates`, or `domain:marketing`.
+
+Every request needs at least one delivery tag. A V2 request with an empty tag collection defaults to `delivery:web`. Tag keys are canonical, deduplicated, bounded, and cannot be declared with conflicting kinds.
+
+```csharp
+new UserNotificationRequestedIntegrationEventV2(
+    eventId,
+    scopeId,
+    occurredAtUtc,
+    userId,
+    "ordering",
+    "ordering.order-updated",
+    1,
+    "Order updated",
+    body: null,
+    NotificationSeverity.Info,
+    payloadJson,
+    [
+        new NotificationTag("delivery:web", NotificationTagKind.Delivery),
+        new NotificationTag("delivery:email", NotificationTagKind.Delivery),
+        new NotificationTag("domain:order-updates", NotificationTagKind.Domain)
+    ],
+    NotificationDeliveryPolicy.RespectPreferences);
+```
+
+The first valid V2 request registers missing definitions with safe defaults. Known system delivery tags are owned by Notifications; other tags are attributed to their producer module. Operators can create/update definitions and deactivate tags. Deactivation fails closed for new delivery planning, including `mandatory` requests; mandatory bypasses user preferences, not operator safety controls.
+
+V1 requests remain consumable. They are projected as web-inbox history and receive a delivered `delivery:web` audit row. Producers should migrate to V2 for tags, preferences, and adapter delivery.
+
+## Preferences And Routing
+
+Preferences are tenant- and user-scoped. Missing preferences mean enabled. Under `respect-preferences`:
+
+- disabling a domain tag suppresses every delivery route on that notification;
+- disabling a delivery tag suppresses only that pipeline;
+- a replaceable `INotificationPreferenceEvaluator` can add product-local policy without coupling to another module database.
+
+`mandatory` bypasses stored/user preference suppression for security or legal notices. Producers, not operators, choose that policy in the durable contract.
+
+Routes map a delivery tag to one active adapter provider. If no explicit route exists and exactly one compatible durable provider is registered, that provider is selected. Zero providers produces an auditable `unroutable` job; multiple providers without a route produce `route-ambiguous`. This prevents configuration order from silently selecting a vendor.
+
+## Durable Delivery Guarantees
+
+The projector writes notification history, tags, and all planned delivery jobs in the Notifications unit of work. Delivery is then:
+
+- at least once;
+- claimed in bounded batches under a serializable transaction;
+- protected by expiring worker leases;
+- executed with bounded concurrency;
+- retried with bounded exponential backoff;
+- terminal as `delivered`, `rejected`, `exhausted`, `suppressed`, or `unroutable`;
+- auditable through immutable attempt rows and optional provider receipt ids.
+
+The database prevents duplicate plans for the same notification, delivery tag, and provider. Adapters receive the stable delivery id and must use it as their provider idempotency key. The included email adapter sends `notification:{deliveryId}` through the shared email transport abstraction.
+
+Adapter exception messages are logged only by exception type and are never stored. Persisted attempt codes are bounded semantic codes. Notification content, tenant/user ids, destinations, and payload fields are not metric dimensions.
+
+Operators may retry `rejected`, `exhausted`, and `unroutable` jobs after repairing a provider or route. A retry resets the job to pending while retaining the previous immutable attempt history.
+
+## Email Adapter And PII Boundary
+
+`Gma.Modules.Notifications.Adapters.Email` is optional and disabled by default. It depends on two application-owned seams:
+
+- `IUserNotificationEmailAddressResolver` resolves a destination at attempt time;
+- `Gma.Framework.Email.IEmailSender` sends through the chosen provider.
+
+Notifications persistence never becomes an email-address directory or a credential vault. The resolver can read the product's profile/account model; the email sender adapter owns vendor credentials. Replace `IUserNotificationEmailRenderer` when product templates are required; the default renderer is plain text.
+
+```csharp
+builder.Services.AddSingleton<IUserNotificationEmailAddressResolver, ProductEmailAddressResolver>();
+builder.Services.AddSingleton<IEmailSender, ProductEmailSender>();
+builder.Services.AddNotificationEmailAdapter(builder.Configuration);
+```
+
+```json
+{
+  "Notifications": {
+    "Adapters": {
+      "Email": {
+        "Enabled": true,
+        "ProviderName": "email-primary",
+        "SenderAddress": "notifications@example.com",
+        "SenderName": "Example",
+        "SubjectPrefix": "[Example]"
+      }
+    }
+  }
+}
+```
+
+Other pipelines implement `IUserNotificationSink`, declare supported `delivery:*` tags, and set `DeliveryModes` to `Durable`. Best-effort live sinks set `BestEffort`; a sink can opt into both explicitly. This prevents the publisher and durable worker from double-sending through the same adapter accidentally.
 
 ## User API
 
-`Gma.Modules.Notifications.Api` maps current-user endpoints:
+All user endpoints require authentication and scope context. Tenant claims must match the active scope.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/notifications` | List the current user's notification history. |
-| `GET` | `/api/notifications/{notificationId}` | Get one current-user notification. |
-| `POST` | `/api/notifications/{notificationId}/read` | Mark one current-user notification as read. |
-| `POST` | `/api/notifications/read-all` | Mark all current-user notifications as read. |
-| `GET` | `/api/notifications/history/stream` | Stream newly committed history rows for the current user. |
-| `GET` | `/api/notifications/broadcasts` | List tenant/platform broadcasts visible to the current user. |
+| `GET` | `/api/notifications/preferences` | List configured tags with the current user's effective preference. |
+| `PUT` | `/api/notifications/preferences/{tagKey}` | Enable or disable one active tag for the current user. |
+| `GET` | `/api/notifications` | List visible web-inbox history. |
+| `GET` | `/api/notifications/{notificationId}` | Get one visible notification. |
+| `POST` | `/api/notifications/{notificationId}/read` | Mark one notification read. |
+| `POST` | `/api/notifications/read-all` | Mark all visible notifications read. |
+| `GET` | `/api/notifications/history/stream` | Stream newly committed web-inbox rows. |
+| `GET` | `/api/notifications/broadcasts` | List visible broadcasts. |
 | `GET` | `/api/notifications/broadcasts/{broadcastId}` | Get one visible broadcast. |
-| `POST` | `/api/notifications/broadcasts/{broadcastId}/read` | Mark one visible broadcast as read for the current user. |
-| `POST` | `/api/notifications/broadcasts/read-all` | Mark all visible broadcasts as read for the current user. |
-| `GET` | `/api/notifications/broadcasts/stream` | Stream newly committed user-targeted broadcasts. |
+| `POST` | `/api/notifications/broadcasts/{broadcastId}/read` | Mark one broadcast read. |
+| `POST` | `/api/notifications/broadcasts/read-all` | Mark all visible broadcasts read. |
+| `GET` | `/api/notifications/broadcasts/stream` | Stream newly committed broadcasts. |
 
-The stream accepts optional `afterSequence`. When omitted, the stream starts after the user's current maximum durable sequence, so it behaves as a live stream. When supplied, it replays rows with a greater `StreamSequence`, which gives clients a reconnect cursor.
-
-All endpoints require authentication and scope context. In tenant-aware hosts, the tenant claim on the token must match the active scope.
-
-Current-user history endpoints use the shared access-subject foundation. The API constructs an explicit `AccessSubject` from the authenticated user and active tenant, while `Gma.Modules.Notifications.Application.Visibility.NotificationHistoryAccess` owns the simple user/tenant checks. Single-notification reads and mark-read operations check a minimal access summary and return not-found-shaped results for wrong-user or wrong-tenant access. List, stream, cursor, and read-all paths keep visibility constrained inside repository queries.
+History exposes only rows whose V2 plan made `delivery:web` visible. Suppressed email-only jobs do not leak into the web inbox.
 
 ## Admin API
 
-`Gma.Modules.Notifications.AdminApi` maps admin-only endpoints under `/api/admin/notifications`:
+Admin endpoints use the shared audited executor and scoped RBAC permissions.
 
-| Method | Route | Purpose |
+| Method | Route | Permission |
 | --- | --- | --- |
-| `GET` | `/api/admin/notifications` | List tenant notification history, optionally filtered by user and unread state. |
-| `GET` | `/api/admin/notifications/{notificationId}` | Get one tenant notification. |
-| `GET` | `/api/admin/notifications/history/stream` | Stream committed tenant history rows, optionally filtered by user. |
-| `GET` | `/api/admin/notifications/broadcasts` | List scope-aware broadcasts. |
-| `POST` | `/api/admin/notifications/broadcasts` | Create a scope-aware broadcast. |
-| `GET` | `/api/admin/notifications/platform-broadcasts` | List platform-scoped broadcasts. |
-| `POST` | `/api/admin/notifications/platform-broadcasts` | Create a platform-scoped broadcast. |
-| `GET` | `/api/admin/notifications/broadcasts/inbox` | List broadcasts visible to the current admin actor. |
-| `POST` | `/api/admin/notifications/broadcasts/inbox/{broadcastId}/read` | Mark one admin-targeted broadcast as read. |
-| `POST` | `/api/admin/notifications/broadcasts/inbox/read-all` | Mark all visible admin broadcasts as read. |
-| `GET` | `/api/admin/notifications/broadcasts/inbox/stream` | Stream newly committed admin-targeted broadcasts. |
+| `GET` | `/api/admin/notifications/tags` | `notifications.configuration.read` |
+| `POST` | `/api/admin/notifications/tags` | `notifications.configuration.write` |
+| `PUT` | `/api/admin/notifications/tags/{tagKey}` | `notifications.configuration.write` |
+| `GET` | `/api/admin/notifications/routes` | `notifications.configuration.read` |
+| `PUT` | `/api/admin/notifications/routes/{deliveryTag}` | `notifications.configuration.write` |
+| `GET` | `/api/admin/notifications/deliveries` | `notifications.deliveries.read` |
+| `GET` | `/api/admin/notifications/deliveries/{deliveryId}` | `notifications.deliveries.read` |
+| `POST` | `/api/admin/notifications/deliveries/{deliveryId}/retry` | `notifications.deliveries.retry` |
+| `GET` | `/api/admin/notifications` | `notifications.history.read` |
+| `GET` | `/api/admin/notifications/{notificationId}` | `notifications.history.read` |
+| `GET/POST` | `/api/admin/notifications/broadcasts` | broadcast read/create permission |
+| `GET/POST` | `/api/admin/notifications/platform-broadcasts` | global broadcast read/create grant |
 
-Admin endpoints use the shared admin API executor, audit pipeline, tenant requirement where applicable, and Notifications permissions:
+Delivery lists support `status`, `userId`, `deliveryTag`, `page`, and `pageSize`. Responses use typed string contract values for provider, status, outcome, origin, tag kind, and policy.
 
-- `notifications.history.read`
-- `notifications.broadcasts.read`
-- `notifications.broadcasts.create`
+## Persistence And Migration
 
-Admins use a separate API surface from normal users because tenant-wide history and broadcast management are operational capabilities, not self-service user capabilities.
+The `notifications` schema owns:
 
-## Persistence
+- `user_notifications` and `user_notification_tags`;
+- `tag_definitions` and `preferences`;
+- `delivery_routes`, `deliveries`, and `delivery_attempts`;
+- `notification_broadcasts` and recipient read receipts;
+- `inbox_messages` for idempotent integration-event consumption.
 
-The module owns the `notifications` schema with:
+SQL Server and PostgreSQL have provider-specific migrations. The V2 migration backfills legacy notification rows with `delivery:web` and `respect-preferences`, preserving existing inbox behavior. Run the selected provider migrations before enabling the module.
 
-- `user_notifications` for history/read state;
-- `notification_broadcasts` for tenant/platform broadcasts;
-- `notification_broadcast_reads` for per-recipient broadcast read receipts;
-- `inbox_messages` for idempotent integration-event processing.
+Retention is disabled until the product chooses policy. When enabled, cleanup is bounded and includes old attempt rows according to `Notifications:Delivery:AttemptRetentionDays`.
 
-Stored notification fields include scope id, user id, source module, notification name/version, title/body/severity, occurrence time, stored time, read timestamp, canonical payload JSON, and a database-generated `StreamSequence`.
-
-`StreamSequence` is the durable stream cursor. It avoids timestamp-only polling gaps and is indexed by tenant/user for current-user streams and by tenant for admin streams.
-
-Broadcasts have their own `StreamSequence`. Do not reuse a user history cursor for broadcast streams or vice versa. Tenant broadcasts carry a scope id; platform broadcasts leave scope id null and are included explicitly by the broadcast repository.
-
-Durable history and broadcast streams are configured through `Notifications:DurableStreams`. Defaults are a `25` item batch and a `00:00:01` poll interval. The module validates this at startup so oversized batches or tight poll loops fail fast. Poll-time query failures are logged and close the stream; clients should reconnect with their last acknowledged sequence.
-
-SQL Server and PostgreSQL migrations are provider-specific and use the schema-local EF history table.
-
-`INotificationPreferenceEvaluator` is a replaceable application seam. The default stores all valid durable requests; products can replace it with a local preference projection without coupling Notifications to another module's database.
-
-`Notifications:Retention` is disabled until a product chooses policy. When enabled, a bounded hosted cleanup removes old read/unread user history and broadcasts in separate batches. Configure `ReadHistoryDays`, `UnreadHistoryDays`, `BroadcastDays`, `BatchSize`, and `IntervalMinutes`; keep unread retention at least as long as read retention. Multi-instance live delivery remains a host-level backplane concern behind the shared realtime contracts—durable history does not depend on that backplane.
-
-## Durable Ingestion
-
-`Gma.Modules.Notifications.Contracts` owns `UserNotificationRequestedIntegrationEvent`. Producer modules that want guaranteed history creation publish that event through their own outbox and declare it in their descriptor. The physical subject remains producer-scoped:
-
-```text
-{application-namespace}.{producer-module}.user-notification-requested.v1
+```json
+{
+  "Notifications": {
+    "Delivery": {
+      "Enabled": true,
+      "BatchSize": 50,
+      "MaxConcurrency": 8,
+      "PollIntervalSeconds": 5,
+      "LeaseSeconds": 60,
+      "MaxAttempts": 8,
+      "RetryBaseSeconds": 5,
+      "RetryMaxMinutes": 30,
+      "AttemptRetentionDays": 90
+    },
+    "Retention": {
+      "Enabled": false,
+      "ReadHistoryDays": 90,
+      "UnreadHistoryDays": 365,
+      "BroadcastDays": 365,
+      "BatchSize": 500,
+      "IntervalMinutes": 60
+    },
+    "DurableStreams": {
+      "BatchSize": 25,
+      "PollInterval": "00:00:01"
+    }
+  }
+}
 ```
-
-The compiled Ordering example publishes affected-order-owner notification requests:
-
-```text
-gma.ordering.user-notification-requested.v1
-```
-
-`Gma.Modules.Notifications.Application` exposes `AddUserNotificationRequestSubscription(producerModule)` for hosts or examples that want this module to consume a producer's durable notification requests. The NATS consumer loop writes the notification and inbox processed marker in the `notifications` schema transaction, giving at-least-once delivery with module-owned idempotency.
-
-This pattern is explicit by design. The reusable Notifications descriptor does not subscribe to Catalog or any other producer by default. If a producer should feed notification history, compose a producer-specific subscription in the host/example runtime. Do not add cross-module EF links or direct writes into `Gma.Modules.Notifications.Persistence`.
-
-## Shared Live Adapters
-
-The shared path still exists for best-effort live delivery:
-
-- transactional commands may enqueue through `IUserNotificationRequestQueue`;
-- the optional CQRS bridge flushes after the source module unit of work commits;
-- `IUserNotificationPublisher` can store history through `IUserNotificationHistoryWriter` when the module is composed;
-- `Gma.Framework.Realtime.Notifications` bridges notification messages onto the generic in-memory realtime feed;
-- live SSE/SignalR sinks deliver only when `Notifications:Enabled=true`.
-
-Use the durable integration-event path for notifications that must survive process crashes between source commit and live publish.
 
 ## Composition
 
-Reference and register only the surfaces needed by the host:
-
 ```csharp
-using Gma.Modules.Notifications.Api;
-using Gma.Modules.Notifications.AdminApi;
-
 builder.AddModule<NotificationsModule>();
 builder.AddAdminApiModule<NotificationsAdminApiModule>();
-```
-
-Hosts that also expose best-effort live notifications compose the shared framework pieces explicitly:
-
-```csharp
-builder.AddUserNotificationsCqrs();
-builder.AddUserNotificationsRealtime();
-builder.AddUserNotificationServerSentEvents();
-builder.AddUserNotificationSignalR();
-```
-
-The module does not reference realtime, SSE, or SignalR packages directly. Those are host-level adapters around `Gma.Framework.Notifications` contracts.
-
-Run the provider-specific module migrations before starting the host. To consume NATS notification request events, the runtime host must also compose NATS consumers and the producer-specific subscription:
-
-```csharp
-builder.Services.AddNotificationsApplication();
 builder.Services.AddUserNotificationRequestSubscription(OrderingModuleMetadata.Name);
 ```
 
-Do this only in hosts/examples that intentionally compose both the producing module and the Notifications consumer.
+Producer subscriptions are explicit and producer-scoped. V1 and V2 have distinct durable consumer bindings. The physical V2 subject is:
 
-Payload JSON is normalized and bounded to 32 KB for both direct history rows and broadcasts. Broadcast read receipts are idempotent per recipient scope/kind/id and use provider-specific insert-if-missing behavior so retry/concurrent read calls stay safe. The recipient scope includes the current/default tenant context when present, which prevents platform broadcast read state from crossing tenants with reused opaque recipient ids. For non-tenant projects, omit `TenancyModule`; the local default scope id remains the broadcast scope context.
+```text
+{application-namespace}.{producer-module}.user-notification-requested.v2
+```
+
+The in-process `IUserNotificationHistoryWriter` also projects through the V2 planner, so direct runtime publishing and outbox-driven ingestion use the same tag/preference/routing rules.
+The module also contributes an `IUserNotificationDeliveryPolicyEvaluator`, so best-effort web sinks consult the persisted plan before sending. A suppressed or missing plan fails closed instead of bypassing a user's tag preferences during live delivery.
 
 ## Boundaries
 
-- Other modules may reference `Gma.Modules.Notifications.Contracts`.
-- Other modules must not reference `Gma.Modules.Notifications.Application`, `Gma.Modules.Notifications.Domain`, `Gma.Modules.Notifications.Persistence`, `Gma.Modules.Notifications.Api`, or `Gma.Modules.Notifications.AdminApi`.
-- Producing modules publish notification requests through their own outbox; they never write notification history directly.
-- Durable business decisions must use integration events and local projections, not notification history.
-
-## Follow-Ups
-
-- Add product-specific preference projections/adapters where a product needs user controls beyond the default allow behavior.
-- Add delivery receipts or retention administration only for products whose support/compliance workflows require them.
-- Consider wildcard notification request subscriptions only as a shared messaging feature, not as hidden Notifications module magic.
+- Producers reference only `Gma.Modules.Notifications.Contracts` and decide recipients, tags, policy, and safe content.
+- Products compose adapters; producer modules never reference adapter, application, domain, persistence, API, or admin projects.
+- Notifications does not query Auth/Profile tables or store provider secrets/destination addresses.
+- Durable business decisions use source-module state and integration events, never notification history or delivery receipts.
+- Live SSE/SignalR is optional and best effort; durable inbox and adapter jobs do not depend on a realtime backplane.
+- Multi-instance deployments must size database connections, lease settings, and provider limits, and must alert on pending age/exhausted counts.

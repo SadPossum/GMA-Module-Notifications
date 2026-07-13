@@ -1,10 +1,10 @@
 namespace Gma.Modules.Notifications.Persistence.Configurations;
 
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Gma.Framework.Naming;
 using Gma.Modules.Notifications.Domain.Aggregates;
 using Gma.Modules.Notifications.Domain.ValueObjects;
-using Gma.Framework.Naming;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 internal sealed class UserNotificationConfiguration : IEntityTypeConfiguration<UserNotification>
 {
@@ -59,9 +59,26 @@ internal sealed class UserNotificationConfiguration : IEntityTypeConfiguration<U
             .HasColumnName("PayloadJson")
             .HasMaxLength(NotificationPayload.MaxLength)
             .IsRequired();
+        builder.Property(notification => notification.DeliveryPolicy)
+            .HasConversion(
+                value => NotificationRoutingSemanticNames.DeliveryPolicy(value),
+                value => NotificationRoutingSemanticNames.ParseDeliveryPolicy(value))
+            .HasMaxLength(NotificationRoutingSemanticNames.MaxLength)
+            .HasDefaultValue(NotificationDeliveryPolicy.RespectPreferences)
+            .IsRequired();
+        builder.Property(notification => notification.IsInboxVisible)
+            .HasDefaultValue(true)
+            .IsRequired();
+        builder.HasMany(notification => notification.Tags)
+            .WithOne()
+            .HasForeignKey(tag => tag.NotificationId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Navigation(notification => notification.Tags)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
         builder.HasIndex(notification => new { notification.ScopeId, notification.Recipient, notification.OccurredAtUtc });
         builder.HasIndex(notification => new { notification.ScopeId, notification.Recipient, notification.ReadAtUtc });
         builder.HasIndex(notification => new { notification.ScopeId, notification.Recipient, notification.StreamSequence });
         builder.HasIndex(notification => new { notification.ScopeId, notification.StreamSequence });
+        builder.HasIndex(notification => new { notification.ScopeId, notification.IsInboxVisible, notification.CreatedAtUtc });
     }
 }

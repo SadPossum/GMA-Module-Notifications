@@ -1,9 +1,9 @@
 namespace Gma.Modules.Notifications.Tests;
 
-using Microsoft.Extensions.DependencyInjection;
+using Gma.Framework.Messaging;
 using Gma.Modules.Notifications.Application;
 using Gma.Modules.Notifications.Contracts;
-using Gma.Framework.Messaging;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 [Trait("Category", "Unit")]
@@ -23,7 +23,8 @@ public sealed class UserNotificationRequestedIntegrationEventTests
             " Item updated ",
             "  Catalog item changed.  ",
             NotificationSeverity.Success,
-            "{ \"sku\": \"SKU-1\" }");
+                                 /*lang=json,strict*/
+                                 "{ \"sku\": \"SKU-1\" }");
 
         Assert.Equal("tenant-a", integrationEvent.ScopeId);
         Assert.Equal("user-a", integrationEvent.UserId);
@@ -32,7 +33,7 @@ public sealed class UserNotificationRequestedIntegrationEventTests
         Assert.Equal("Item updated", integrationEvent.Title);
         Assert.Equal("Catalog item changed.", integrationEvent.Body);
         Assert.Equal(NotificationSeverity.Success, integrationEvent.Severity);
-        Assert.Equal("{\"sku\":\"SKU-1\"}", integrationEvent.PayloadJson);
+        Assert.Equal(/*lang=json,strict*/ "{\"sku\":\"SKU-1\"}", integrationEvent.PayloadJson);
     }
 
     [Fact]
@@ -139,8 +140,12 @@ public sealed class UserNotificationRequestedIntegrationEventTests
             .AddUserNotificationRequestSubscription("catalog");
 
         using ServiceProvider provider = services.BuildServiceProvider();
+        IReadOnlyCollection<IntegrationEventSubscription> subscriptions =
+            provider.GetRequiredService<IIntegrationEventSubscriptionRegistry>().Subscriptions;
+        Assert.Equal(2, subscriptions.Count);
         IntegrationEventSubscription subscription = Assert.Single(
-            provider.GetRequiredService<IIntegrationEventSubscriptionRegistry>().Subscriptions);
+            subscriptions,
+            item => item.EventType == typeof(UserNotificationRequestedIntegrationEvent));
 
         Assert.Equal(NotificationsModuleMetadata.Name, subscription.ConsumerModule);
         Assert.Equal("catalog", subscription.ProducerModule);
@@ -150,5 +155,13 @@ public sealed class UserNotificationRequestedIntegrationEventTests
         Assert.Equal(
             NotificationsIntegrationSubjects.CreateUserNotificationRequested("catalog"),
             subscription.Subject);
+        IntegrationEventSubscription v2 = Assert.Single(
+            subscriptions,
+            item => item.EventType == typeof(UserNotificationRequestedIntegrationEventV2));
+        Assert.Equal(UserNotificationRequestedIntegrationEventV2.EventVersion, v2.Version);
+        Assert.Equal("catalog-notification-request-v2", v2.HandlerName);
+        Assert.Equal(
+            NotificationsIntegrationSubjects.CreateUserNotificationRequestedV2("catalog"),
+            v2.Subject);
     }
 }

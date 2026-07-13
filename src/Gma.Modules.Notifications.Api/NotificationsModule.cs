@@ -2,18 +2,6 @@ namespace Gma.Modules.Notifications.Api;
 
 using System.Net.ServerSentEvents;
 using System.Security.Claims;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Http.Timeouts;
-using Microsoft.AspNetCore.Routing;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using Gma.Modules.Notifications.Application;
-using Gma.Modules.Notifications.Application.Commands;
-using Gma.Modules.Notifications.Application.Queries;
-using Gma.Modules.Notifications.Contracts;
-using Gma.Modules.Notifications.Persistence;
 using Gma.Framework.AccessControl;
 using Gma.Framework.Api.Modules;
 using Gma.Framework.Api.Observability;
@@ -22,9 +10,21 @@ using Gma.Framework.Api.Scoping;
 using Gma.Framework.Cqrs;
 using Gma.Framework.ModuleComposition;
 using Gma.Framework.Naming;
-using Gma.Framework.Scoping;
 using Gma.Framework.Results;
+using Gma.Framework.Scoping;
 using Gma.Framework.Security;
+using Gma.Modules.Notifications.Application;
+using Gma.Modules.Notifications.Application.Commands;
+using Gma.Modules.Notifications.Application.Queries;
+using Gma.Modules.Notifications.Contracts;
+using Gma.Modules.Notifications.Persistence;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Timeouts;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 public sealed class NotificationsModule : IModule
 {
@@ -43,6 +43,48 @@ public sealed class NotificationsModule : IModule
             .WithModuleName(this.Name)
             .WithTags("Notifications")
             .RequireAuthorization();
+
+        group.MapGet("/preferences", async (
+            HttpContext httpContext,
+            IScopeContext scopeContext,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+        {
+            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
+            {
+                return failure;
+            }
+
+            Result<NotificationPreferenceListResponse> result = await dispatcher.QueryAsync(
+                new ListNotificationPreferencesQuery(subject.Id),
+                cancellationToken).ConfigureAwait(false);
+            return result.ToHttpResult(PublicErrorStatusCodes);
+        })
+            .RequireScope();
+
+        group.MapPut("/preferences/{tagKey}", async (
+            string tagKey,
+            SetNotificationPreferenceRequest request,
+            HttpContext httpContext,
+            IScopeContext scopeContext,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+        {
+            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
+            {
+                return failure;
+            }
+
+            Result<NotificationPreferenceItem> result = await dispatcher.SendAsync(
+                new SetNotificationPreferenceCommand(
+                    RequiredScopeId(scopeContext),
+                    subject.Id,
+                    tagKey,
+                    request.Enabled),
+                cancellationToken).ConfigureAwait(false);
+            return result.ToHttpResult(PublicErrorStatusCodes);
+        })
+            .RequireScope();
 
         group.MapGet("/", async (
             int? page,
@@ -63,8 +105,8 @@ public sealed class NotificationsModule : IModule
                     subject,
                     CurrentScopeId(scopeContext),
                     unreadOnly ?? false,
-                    page ?? Gma.Framework.Pagination.PageRequest.DefaultPage,
-                    pageSize ?? Gma.Framework.Pagination.PageRequest.DefaultPageSize),
+                    page ?? Framework.Pagination.PageRequest.DefaultPage,
+                    pageSize ?? Framework.Pagination.PageRequest.DefaultPageSize),
                 cancellationToken).ConfigureAwait(false);
 
             return result.ToHttpResult(PublicErrorStatusCodes);
@@ -91,8 +133,8 @@ public sealed class NotificationsModule : IModule
                     NotificationBroadcastRecipientKind.User,
                     subject.Id,
                     unreadOnly ?? false,
-                    page ?? Gma.Framework.Pagination.PageRequest.DefaultPage,
-                    pageSize ?? Gma.Framework.Pagination.PageRequest.DefaultPageSize),
+                    page ?? Framework.Pagination.PageRequest.DefaultPage,
+                    pageSize ?? Framework.Pagination.PageRequest.DefaultPageSize),
                 cancellationToken).ConfigureAwait(false);
 
             return result.ToHttpResult(PublicErrorStatusCodes);
@@ -484,6 +526,9 @@ public sealed class NotificationsModule : IModule
     private static string? CurrentScopeId(IScopeContext scopeContext) =>
         scopeContext.ScopeId;
 
+    private static string RequiredScopeId(IScopeContext scopeContext) =>
+        scopeContext.ScopeId ?? string.Empty;
+
     private static void LogStreamQueryFailure(ILogger logger, string streamName, Error error)
     {
         logger.LogWarning(
@@ -494,6 +539,8 @@ public sealed class NotificationsModule : IModule
 
     private static readonly ApiErrorStatusCodeMap PublicErrorStatusCodes = ApiErrorStatusCodeMap.Create(
         new ApiErrorStatusCode(NotificationsApplicationErrors.NotificationNotFound.Code, StatusCodes.Status404NotFound),
+        new ApiErrorStatusCode(NotificationsApplicationErrors.TagDefinitionNotFound.Code, StatusCodes.Status404NotFound),
+        new ApiErrorStatusCode(NotificationsApplicationErrors.TagDefinitionInactive.Code, StatusCodes.Status409Conflict),
         new ApiErrorStatusCode(NotificationsApplicationErrors.BroadcastNotFound.Code, StatusCodes.Status404NotFound),
         new ApiErrorStatusCode(NotificationsApplicationErrors.AccessDenied.Code, StatusCodes.Status403Forbidden));
 }

@@ -16,4 +16,6 @@ public sealed record AdminNotificationHistoryItem(
     DateTimeOffset OccurredAtUtc,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset? ReadAtUtc,
-    JsonElement Payload);
+    JsonElement Payload,
+    IReadOnlyList<string> Tags,
+    NotificationDeliveryPolicy DeliveryPolicy);

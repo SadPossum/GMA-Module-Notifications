@@ -14,7 +14,10 @@ public static class NotificationsProfiles
         provides:
         [
             NotificationsCompositionFeatures.HistoryProvided(Provider(DefaultName)),
-            NotificationsCompositionFeatures.BroadcastsProvided(Provider(DefaultName))
+            NotificationsCompositionFeatures.BroadcastsProvided(Provider(DefaultName)),
+            NotificationsCompositionFeatures.PreferencesProvided(Provider(DefaultName)),
+            NotificationsCompositionFeatures.RoutingProvided(Provider(DefaultName)),
+            NotificationsCompositionFeatures.DurableDeliveryProvided(Provider(DefaultName))
         ],
         requires:
         [
@@ -24,7 +27,7 @@ public static class NotificationsProfiles
                 reason: "Notifications history and broadcast inboxes are scope-aware; register scoping infrastructure or a tenancy bridge.")
         ],
         displayName: "Notifications default",
-        description: "Scope-aware durable notification history, broadcasts, read state, and admin/public stream cursors.");
+        description: "Scope-aware durable notification history, preferences, tag routing, adapter delivery jobs and receipts, broadcasts, read state, and admin/public stream cursors.");
 
     private static string Provider(string profileName) => $"{NotificationsModuleMetadata.Name}/{profileName}";
 }

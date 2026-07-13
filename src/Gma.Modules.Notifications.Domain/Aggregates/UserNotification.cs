@@ -1,10 +1,11 @@
 namespace Gma.Modules.Notifications.Domain.Aggregates;
 
-using Gma.Modules.Notifications.Domain.Errors;
-using Gma.Modules.Notifications.Domain.ValueObjects;
 using Gma.Framework.Domain.Models;
 using Gma.Framework.Naming;
 using Gma.Framework.Results;
+using Gma.Modules.Notifications.Domain.Entities;
+using Gma.Modules.Notifications.Domain.Errors;
+using Gma.Modules.Notifications.Domain.ValueObjects;
 
 public sealed class UserNotification : ScopedAggregateRoot<Guid>
 {
@@ -14,6 +15,8 @@ public sealed class UserNotification : ScopedAggregateRoot<Guid>
     public const int TitleMaxLength = 256;
     public const int BodyMaxLength = 4096;
     public const int SeverityMaxLength = NotificationSeverityNames.MaxLength;
+
+    private readonly List<UserNotificationTag> tags = [];
 
     private UserNotification() { }
 
@@ -31,6 +34,9 @@ public sealed class UserNotification : ScopedAggregateRoot<Guid>
     public DateTimeOffset CreatedAtUtc { get; private set; }
     public DateTimeOffset? ReadAtUtc { get; private set; }
     public NotificationPayload Payload { get; private set; }
+    public NotificationDeliveryPolicy DeliveryPolicy { get; private set; }
+    public bool IsInboxVisible { get; private set; }
+    public IReadOnlyCollection<UserNotificationTag> Tags => this.tags;
 
     public static Result<UserNotification> Create(
         Guid id,
@@ -44,7 +50,40 @@ public sealed class UserNotification : ScopedAggregateRoot<Guid>
         NotificationSeverity severity,
         DateTimeOffset occurredAtUtc,
         DateTimeOffset createdAtUtc,
-        string payloadJson)
+        string payloadJson) =>
+        Create(
+            id,
+            scopeId,
+            userId,
+            module,
+            name,
+            version,
+            title,
+            body,
+            severity,
+            occurredAtUtc,
+            createdAtUtc,
+            payloadJson,
+            ["delivery:web"],
+            NotificationDeliveryPolicy.RespectPreferences,
+            isInboxVisible: true);
+
+    public static Result<UserNotification> Create(
+        Guid id,
+        string scopeId,
+        string userId,
+        string module,
+        string name,
+        int version,
+        string title,
+        string? body,
+        NotificationSeverity severity,
+        DateTimeOffset occurredAtUtc,
+        DateTimeOffset createdAtUtc,
+        string payloadJson,
+        IReadOnlyCollection<string> tags,
+        NotificationDeliveryPolicy deliveryPolicy,
+        bool isInboxVisible)
     {
         if (id == Guid.Empty)
         {
@@ -85,6 +124,25 @@ public sealed class UserNotification : ScopedAggregateRoot<Guid>
             return Result.Failure<UserNotification>(payload.Error);
         }
 
+        if (deliveryPolicy is not NotificationDeliveryPolicy.RespectPreferences and not NotificationDeliveryPolicy.Mandatory ||
+            tags is null)
+        {
+            return Result.Failure<UserNotification>(NotificationsDomainErrors.DeliveryStatusInvalid);
+        }
+
+        string[] normalizedTags = tags
+            .Select(NotificationTagKey.Create)
+            .Where(result => result.IsSuccess)
+            .Select(result => result.Value.Value)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        if (normalizedTags.Length != tags.Count || normalizedTags.Length == 0 ||
+            !normalizedTags.Any(tag => tag.StartsWith("delivery:", StringComparison.Ordinal)))
+        {
+            return Result.Failure<UserNotification>(NotificationsDomainErrors.TagKeyInvalid);
+        }
+
         UserNotification notification = new(id, normalizedScopeId!)
         {
             Recipient = recipient.Value,
@@ -93,8 +151,21 @@ public sealed class UserNotification : ScopedAggregateRoot<Guid>
             Severity = severity,
             OccurredAtUtc = occurredAtUtc,
             CreatedAtUtc = createdAtUtc,
-            Payload = payload.Value
+            Payload = payload.Value,
+            DeliveryPolicy = deliveryPolicy,
+            IsInboxVisible = isInboxVisible
         };
+
+        foreach (string tag in normalizedTags)
+        {
+            Result<UserNotificationTag> assignment = UserNotificationTag.Create(id, normalizedScopeId!, tag);
+            if (assignment.IsFailure)
+            {
+                return Result.Failure<UserNotification>(assignment.Error);
+            }
+
+            notification.tags.Add(assignment.Value);
+        }
 
         return Result.Success(notification);
     }

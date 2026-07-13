@@ -1,18 +1,6 @@
 namespace Gma.Modules.Notifications.AdminApi;
 
 using System.Net.ServerSentEvents;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Routing;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using Gma.Modules.Notifications.Admin.Contracts;
-using Gma.Modules.Notifications.Application;
-using Gma.Modules.Notifications.Application.Commands;
-using Gma.Modules.Notifications.Application.Queries;
-using Gma.Modules.Notifications.Contracts;
-using Gma.Modules.Notifications.Persistence;
 using Gma.Framework.Administration;
 using Gma.Framework.Administration.Api;
 using Gma.Framework.Api.Observability;
@@ -20,8 +8,20 @@ using Gma.Framework.Api.Results;
 using Gma.Framework.Cqrs;
 using Gma.Framework.ModuleComposition;
 using Gma.Framework.Pagination;
-using Gma.Framework.Scoping;
 using Gma.Framework.Results;
+using Gma.Framework.Scoping;
+using Gma.Modules.Notifications.Admin.Contracts;
+using Gma.Modules.Notifications.Application;
+using Gma.Modules.Notifications.Application.Commands;
+using Gma.Modules.Notifications.Application.Queries;
+using Gma.Modules.Notifications.Contracts;
+using Gma.Modules.Notifications.Persistence;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 public sealed class NotificationsAdminApiModule : IAdminApiModule
 {
@@ -40,6 +40,158 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
             .WithModuleName(this.Name)
             .WithTags("Notifications Admin")
             .RequireAuthorization();
+
+        history.MapGet("/tags", async (
+            bool? activeOnly,
+            HttpContext httpContext,
+            AdminApiExecutor executor,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+            await executor.ExecuteAsync(
+                httpContext,
+                AdminOperation.Create(NotificationsAdminOperationNames.TagsList, NotificationsAdminPermissions.ConfigurationRead),
+                requireTenant: true,
+                token => dispatcher.QueryAsync(
+                    new ListNotificationTagDefinitionsQuery(activeOnly ?? false),
+                    token),
+                cancellationToken).ConfigureAwait(false));
+
+        history.MapPost("/tags", async (
+            AdminCreateNotificationTagDefinitionRequest request,
+            HttpContext httpContext,
+            AdminApiExecutor executor,
+            IAdminActorContext actorContext,
+            IScopeContext scopeContext,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+            await executor.ExecuteAsync(
+                httpContext,
+                AdminOperation.Create(NotificationsAdminOperationNames.TagsCreate, NotificationsAdminPermissions.ConfigurationWrite),
+                requireTenant: true,
+                token => dispatcher.SendAsync(
+                    new CreateNotificationTagDefinitionCommand(
+                        RequiredScopeId(scopeContext),
+                        request.Key,
+                        request.Kind,
+                        request.DisplayName,
+                        request.Description,
+                        RequiredActorId(actorContext)),
+                    token),
+                cancellationToken,
+                errorStatusCodes: AdminErrorStatusCodes).ConfigureAwait(false));
+
+        history.MapPut("/tags/{tagKey}", async (
+            string tagKey,
+            AdminUpdateNotificationTagDefinitionRequest request,
+            HttpContext httpContext,
+            AdminApiExecutor executor,
+            IAdminActorContext actorContext,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+            await executor.ExecuteAsync(
+                httpContext,
+                AdminOperation.Create(NotificationsAdminOperationNames.TagsUpdate, NotificationsAdminPermissions.ConfigurationWrite),
+                requireTenant: true,
+                token => dispatcher.SendAsync(
+                    new UpdateNotificationTagDefinitionCommand(
+                        tagKey,
+                        request.DisplayName,
+                        request.Description,
+                        request.IsActive,
+                        RequiredActorId(actorContext)),
+                    token),
+                cancellationToken,
+                errorStatusCodes: AdminErrorStatusCodes).ConfigureAwait(false));
+
+        history.MapGet("/routes", async (
+            HttpContext httpContext,
+            AdminApiExecutor executor,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+            await executor.ExecuteAsync(
+                httpContext,
+                AdminOperation.Create(NotificationsAdminOperationNames.RoutesList, NotificationsAdminPermissions.ConfigurationRead),
+                requireTenant: true,
+                token => dispatcher.QueryAsync(new ListNotificationDeliveryRoutesQuery(), token),
+                cancellationToken).ConfigureAwait(false));
+
+        history.MapPut("/routes/{deliveryTag}", async (
+            string deliveryTag,
+            AdminSetNotificationDeliveryRouteRequest request,
+            HttpContext httpContext,
+            AdminApiExecutor executor,
+            IAdminActorContext actorContext,
+            IScopeContext scopeContext,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+            await executor.ExecuteAsync(
+                httpContext,
+                AdminOperation.Create(NotificationsAdminOperationNames.RoutesSet, NotificationsAdminPermissions.ConfigurationWrite),
+                requireTenant: true,
+                token => dispatcher.SendAsync(
+                    new SetNotificationDeliveryRouteCommand(
+                        RequiredScopeId(scopeContext),
+                        deliveryTag,
+                        request.Provider,
+                        request.IsActive,
+                        RequiredActorId(actorContext)),
+                    token),
+                cancellationToken,
+                errorStatusCodes: AdminErrorStatusCodes).ConfigureAwait(false));
+
+        history.MapGet("/deliveries", async (
+            string? status,
+            string? userId,
+            string? deliveryTag,
+            int? page,
+            int? pageSize,
+            HttpContext httpContext,
+            AdminApiExecutor executor,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+            await executor.ExecuteAsync(
+                httpContext,
+                AdminOperation.Create(NotificationsAdminOperationNames.DeliveriesList, NotificationsAdminPermissions.DeliveriesRead),
+                requireTenant: true,
+                token => dispatcher.QueryAsync(
+                    new ListNotificationDeliveriesQuery(
+                        ParseDeliveryStatus(status),
+                        userId,
+                        deliveryTag,
+                        page ?? PageRequest.DefaultPage,
+                        pageSize ?? PageRequest.DefaultPageSize),
+                    token),
+                cancellationToken,
+                errorStatusCodes: AdminErrorStatusCodes).ConfigureAwait(false));
+
+        history.MapGet("/deliveries/{deliveryId:guid}", async (
+            Guid deliveryId,
+            HttpContext httpContext,
+            AdminApiExecutor executor,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+            await executor.ExecuteAsync(
+                httpContext,
+                AdminOperation.Create(NotificationsAdminOperationNames.DeliveriesGet, NotificationsAdminPermissions.DeliveriesRead),
+                requireTenant: true,
+                token => dispatcher.QueryAsync(new GetNotificationDeliveryQuery(deliveryId), token),
+                cancellationToken,
+                errorStatusCodes: AdminErrorStatusCodes).ConfigureAwait(false));
+
+        history.MapPost("/deliveries/{deliveryId:guid}/retry", async (
+            Guid deliveryId,
+            HttpContext httpContext,
+            AdminApiExecutor executor,
+            IRequestDispatcher dispatcher,
+            CancellationToken cancellationToken) =>
+            await executor.ExecuteAsync(
+                httpContext,
+                AdminOperation.Create(NotificationsAdminOperationNames.DeliveriesRetry, NotificationsAdminPermissions.DeliveriesRetry),
+                requireTenant: true,
+                token => dispatcher.SendAsync(new RetryNotificationDeliveryCommand(deliveryId), token),
+                cancellationToken,
+                onSuccess: _ => Results.NoContent(),
+                errorStatusCodes: AdminErrorStatusCodes).ConfigureAwait(false));
 
         history.MapGet("/", async (
             string? userId,
@@ -449,6 +601,27 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
     private static string PayloadJson(AdminCreateNotificationBroadcastRequest request) =>
         request.Payload?.GetRawText() ?? "{}";
 
+    private static NotificationDeliveryStatus? ParseDeliveryStatus(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "pending" => NotificationDeliveryStatus.Pending,
+            "processing" => NotificationDeliveryStatus.Processing,
+            "retry-scheduled" => NotificationDeliveryStatus.RetryScheduled,
+            "delivered" => NotificationDeliveryStatus.Delivered,
+            "rejected" => NotificationDeliveryStatus.Rejected,
+            "exhausted" => NotificationDeliveryStatus.Exhausted,
+            "suppressed" => NotificationDeliveryStatus.Suppressed,
+            "unroutable" => NotificationDeliveryStatus.Unroutable,
+            _ => NotificationDeliveryStatus.Unknown
+        };
+    }
+
     private static void LogStreamQueryFailure(ILogger logger, string streamName, Error error)
     {
         logger.LogWarning(
@@ -459,5 +632,10 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
 
     private static readonly ApiErrorStatusCodeMap AdminErrorStatusCodes = ApiErrorStatusCodeMap.Create(
         new ApiErrorStatusCode(NotificationsApplicationErrors.NotificationNotFound.Code, StatusCodes.Status404NotFound),
+        new ApiErrorStatusCode(NotificationsApplicationErrors.TagDefinitionNotFound.Code, StatusCodes.Status404NotFound),
+        new ApiErrorStatusCode(NotificationsApplicationErrors.DeliveryNotFound.Code, StatusCodes.Status404NotFound),
+        new ApiErrorStatusCode(NotificationsApplicationErrors.TagDefinitionAlreadyExists.Code, StatusCodes.Status409Conflict),
+        new ApiErrorStatusCode(NotificationsApplicationErrors.TagDefinitionInactive.Code, StatusCodes.Status409Conflict),
+        new ApiErrorStatusCode(NotificationsApplicationErrors.DeliveryProviderUnsupported.Code, StatusCodes.Status409Conflict),
         new ApiErrorStatusCode(NotificationsApplicationErrors.BroadcastNotFound.Code, StatusCodes.Status404NotFound));
 }

@@ -1,16 +1,17 @@
 namespace Gma.Modules.Notifications.Persistence;
 
-using Microsoft.Extensions.Configuration;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Hosting;
-using Gma.Modules.Notifications.Application.Ports;
-using Gma.Modules.Notifications.Persistence.Repositories;
 using Gma.Framework.Cqrs.UnitOfWork;
 using Gma.Framework.Messaging;
 using Gma.Framework.Notifications;
 using Gma.Framework.Persistence.EntityFrameworkCore;
+using Gma.Modules.Notifications.Application;
+using Gma.Modules.Notifications.Application.Ports;
+using Gma.Modules.Notifications.Persistence.Repositories;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
 public static class DependencyInjection
@@ -50,6 +51,8 @@ public static class DependencyInjection
 
         builder.Services.TryAddScoped<INotificationHistoryRepository, NotificationHistoryRepository>();
         builder.Services.TryAddScoped<INotificationBroadcastRepository, NotificationBroadcastRepository>();
+        builder.Services.TryAddScoped<INotificationRoutingRepository, NotificationRoutingRepository>();
+        builder.Services.TryAddSingleton<NotificationDeliveryMetrics>();
         builder.Services.TryAddEnumerable([
             ServiceDescriptor.Scoped<IUnitOfWork, NotificationsUnitOfWork>(),
             ServiceDescriptor.Scoped<IInboxStore, NotificationsInboxStore>(),
@@ -59,6 +62,15 @@ public static class DependencyInjection
         {
             builder.Services.TryAddEnumerable(
                 ServiceDescriptor.Singleton<IHostedService, NotificationRetentionService>());
+        }
+
+        NotificationDeliveryOptions deliveryOptions = builder.Configuration
+            .GetSection(NotificationDeliveryOptions.SectionName)
+            .Get<NotificationDeliveryOptions>() ?? new();
+        if (deliveryOptions.Enabled)
+        {
+            builder.Services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IHostedService, NotificationDeliveryService>());
         }
 
         return builder;
