@@ -200,6 +200,7 @@ Retention is disabled until the product chooses policy. When enabled, cleanup is
       "UnreadHistoryDays": 365,
       "BroadcastDays": 365,
       "BatchSize": 500,
+      "MaxBatchesPerCategoryPerCycle": 4,
       "IntervalMinutes": 60
     },
     "DurableStreams": {

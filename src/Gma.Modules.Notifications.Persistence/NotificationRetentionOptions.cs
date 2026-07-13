@@ -9,5 +9,6 @@ public sealed class NotificationRetentionOptions
     public int UnreadHistoryDays { get; set; } = 365;
     public int BroadcastDays { get; set; } = 365;
     public int BatchSize { get; set; } = 500;
+    public int MaxBatchesPerCategoryPerCycle { get; set; } = 4;
     public int IntervalMinutes { get; set; } = 60;
 }

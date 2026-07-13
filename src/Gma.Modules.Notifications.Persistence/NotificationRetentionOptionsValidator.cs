@@ -27,6 +27,11 @@ internal sealed class NotificationRetentionOptionsValidator : IValidateOptions<N
             failures.Add("Notifications:Retention:BatchSize must be between 1 and 10000.");
         }
 
+        if (options.MaxBatchesPerCategoryPerCycle is < 1 or > 1_000)
+        {
+            failures.Add("Notifications:Retention:MaxBatchesPerCategoryPerCycle must be between 1 and 1000.");
+        }
+
         if (options.IntervalMinutes is < 1 or > 10_080)
         {
             failures.Add("Notifications:Retention:IntervalMinutes must be between 1 and 10080.");

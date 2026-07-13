@@ -1,5 +1,6 @@
 namespace Gma.Modules.Notifications.Persistence;
 
+using Gma.Framework.Runtime.Maintenance;
 using Gma.Framework.Runtime.Time;
 using Gma.Modules.Notifications.Application;
 using Gma.Modules.Notifications.Domain.Aggregates;
@@ -62,66 +63,126 @@ internal sealed class NotificationRetentionService(
         DateTimeOffset broadcastsBefore = nowUtc.AddDays(-settings.BroadcastDays);
         DateTimeOffset attemptsBefore = nowUtc.AddDays(-deliveryOptions.Value.AttemptRetentionDays);
 
-        Guid[] attemptIds = await ExpiredDeliveryAttempts(dbContext, attemptsBefore)
-            .OrderBy(attempt => attempt.CompletedAtUtc)
-            .Select(attempt => attempt.Id)
-            .Take(settings.BatchSize)
-            .ToArrayAsync(cancellationToken)
+        int attemptCount = await BoundedBatchProcessor.ExecuteAsync(
+                settings.BatchSize,
+                settings.MaxBatchesPerCategoryPerCycle,
+                (batchSize, token) => DeleteExpiredAttemptsBatchAsync(
+                    dbContext,
+                    attemptsBefore,
+                    batchSize,
+                    token),
+                cancellationToken)
             .ConfigureAwait(false);
-        if (attemptIds.Length > 0)
-        {
-            await dbContext.NotificationDeliveryAttempts
-                .IgnoreQueryFilters()
-                .Where(attempt => attemptIds.Contains(attempt.Id))
-                .ExecuteDeleteAsync(cancellationToken)
-                .ConfigureAwait(false);
-        }
-
-        Guid[] notificationIds = await ExpiredUserNotifications(dbContext, readBefore, unreadBefore)
-            .OrderBy(notification => notification.CreatedAtUtc)
-            .Select(notification => notification.Id)
-            .Take(settings.BatchSize)
-            .ToArrayAsync(cancellationToken)
+        int notificationCount = await BoundedBatchProcessor.ExecuteAsync(
+                settings.BatchSize,
+                settings.MaxBatchesPerCategoryPerCycle,
+                (batchSize, token) => DeleteExpiredNotificationsBatchAsync(
+                    dbContext,
+                    readBefore,
+                    unreadBefore,
+                    batchSize,
+                    token),
+                cancellationToken)
             .ConfigureAwait(false);
-        if (notificationIds.Length > 0)
-        {
-            await dbContext.UserNotifications
-                .IgnoreQueryFilters()
-                .Where(notification => notificationIds.Contains(notification.Id))
-                .ExecuteDeleteAsync(cancellationToken)
-                .ConfigureAwait(false);
-        }
-
-        Guid[] broadcastIds = await dbContext.NotificationBroadcasts
-            .IgnoreQueryFilters()
-            .Where(broadcast => broadcast.CreatedAtUtc < broadcastsBefore)
-            .OrderBy(broadcast => broadcast.CreatedAtUtc)
-            .Select(broadcast => broadcast.Id)
-            .Take(settings.BatchSize)
-            .ToArrayAsync(cancellationToken)
+        int broadcastCount = await BoundedBatchProcessor.ExecuteAsync(
+                settings.BatchSize,
+                settings.MaxBatchesPerCategoryPerCycle,
+                (batchSize, token) => DeleteExpiredBroadcastsBatchAsync(
+                    dbContext,
+                    broadcastsBefore,
+                    batchSize,
+                    token),
+                cancellationToken)
             .ConfigureAwait(false);
-        if (broadcastIds.Length > 0)
-        {
-            await dbContext.NotificationBroadcastReads
-                .IgnoreQueryFilters()
-                .Where(read => broadcastIds.Contains(read.BroadcastId))
-                .ExecuteDeleteAsync(cancellationToken)
-                .ConfigureAwait(false);
-            await dbContext.NotificationBroadcasts
-                .IgnoreQueryFilters()
-                .Where(broadcast => broadcastIds.Contains(broadcast.Id))
-                .ExecuteDeleteAsync(cancellationToken)
-                .ConfigureAwait(false);
-        }
 
-        if (notificationIds.Length > 0 || broadcastIds.Length > 0 || attemptIds.Length > 0)
+        if (notificationCount > 0 || broadcastCount > 0 || attemptCount > 0)
         {
             logger.LogInformation(
                 "Notification retention removed {NotificationCount} user notifications, {BroadcastCount} broadcasts, and {DeliveryAttemptCount} delivery attempts.",
-                notificationIds.Length,
-                broadcastIds.Length,
-                attemptIds.Length);
+                notificationCount,
+                broadcastCount,
+                attemptCount);
         }
+    }
+
+    private static async Task<int> DeleteExpiredAttemptsBatchAsync(
+        NotificationsDbContext dbContext,
+        DateTimeOffset completedBefore,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        Guid[] attemptIds = await ExpiredDeliveryAttempts(dbContext, completedBefore)
+            .OrderBy(attempt => attempt.CompletedAtUtc)
+            .Select(attempt => attempt.Id)
+            .Take(batchSize)
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (attemptIds.Length == 0)
+        {
+            return 0;
+        }
+
+        return await dbContext.NotificationDeliveryAttempts
+            .IgnoreQueryFilters()
+            .Where(attempt => attemptIds.Contains(attempt.Id))
+            .ExecuteDeleteAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static async Task<int> DeleteExpiredNotificationsBatchAsync(
+        NotificationsDbContext dbContext,
+        DateTimeOffset readBefore,
+        DateTimeOffset unreadBefore,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        Guid[] notificationIds = await ExpiredUserNotifications(dbContext, readBefore, unreadBefore)
+            .OrderBy(notification => notification.CreatedAtUtc)
+            .Select(notification => notification.Id)
+            .Take(batchSize)
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (notificationIds.Length == 0)
+        {
+            return 0;
+        }
+
+        return await dbContext.UserNotifications
+            .IgnoreQueryFilters()
+            .Where(notification => notificationIds.Contains(notification.Id))
+            .ExecuteDeleteAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static async Task<int> DeleteExpiredBroadcastsBatchAsync(
+        NotificationsDbContext dbContext,
+        DateTimeOffset createdBefore,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        Guid[] broadcastIds = await dbContext.NotificationBroadcasts
+            .IgnoreQueryFilters()
+            .Where(broadcast => broadcast.CreatedAtUtc < createdBefore)
+            .OrderBy(broadcast => broadcast.CreatedAtUtc)
+            .Select(broadcast => broadcast.Id)
+            .Take(batchSize)
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (broadcastIds.Length == 0)
+        {
+            return 0;
+        }
+
+        await dbContext.NotificationBroadcastReads
+            .IgnoreQueryFilters()
+            .Where(read => broadcastIds.Contains(read.BroadcastId))
+            .ExecuteDeleteAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return await dbContext.NotificationBroadcasts
+            .IgnoreQueryFilters()
+            .Where(broadcast => broadcastIds.Contains(broadcast.Id))
+            .ExecuteDeleteAsync(cancellationToken)
+            .ConfigureAwait(false);
     }
 
     internal static IQueryable<UserNotification> ExpiredUserNotifications(
