@@ -68,7 +68,7 @@ indent_size = 2
 
 # Batch Files
 [*.{cmd,bat}]
-end_of_line = crlf
+end_of_line = lf
 
 # Bash Files
 [*.sh]

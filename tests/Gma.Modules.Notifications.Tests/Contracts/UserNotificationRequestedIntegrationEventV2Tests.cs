@@ -108,8 +108,8 @@ public sealed class UserNotificationRequestedIntegrationEventV2Tests
             "New login",
             "A new session was created.",
             NotificationSeverity.Warning,
-                                 /*lang=json,strict*/
-                                 "{\"sessionId\":\"safe-reference\"}",
+            /*lang=json,strict*/
+            "{\"sessionId\":\"safe-reference\"}",
             tags,
             policy);
 }

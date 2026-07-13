@@ -23,8 +23,8 @@ public sealed class UserNotificationRequestedIntegrationEventTests
             " Item updated ",
             "  Catalog item changed.  ",
             NotificationSeverity.Success,
-                                 /*lang=json,strict*/
-                                 "{ \"sku\": \"SKU-1\" }");
+            /*lang=json,strict*/
+            "{ \"sku\": \"SKU-1\" }");
 
         Assert.Equal("tenant-a", integrationEvent.ScopeId);
         Assert.Equal("user-a", integrationEvent.UserId);
