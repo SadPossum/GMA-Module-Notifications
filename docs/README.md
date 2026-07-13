@@ -17,6 +17,7 @@ Gma.Modules.Notifications.Api
 Gma.Modules.Notifications.Admin.Contracts
 Gma.Modules.Notifications.AdminApi
 Gma.Modules.Notifications.Adapters.Email
+Gma.Modules.Notifications.Integrations.Auth
 ```
 
 `NotificationsProfiles.Default` provides the `history`, `broadcasts`, `preferences`, `routing`, and `durable-delivery` composition features and requires scope context. Applications explicitly select the API/admin surfaces and any delivery adapters they need. Realtime SSE/SignalR remains a separately composed, best-effort framework concern.
@@ -95,7 +96,7 @@ Operators may retry `rejected`, `exhausted`, and `unroutable` jobs after repairi
 
 `Gma.Modules.Notifications.Adapters.Email` is optional and disabled by default. It depends on two application-owned seams:
 
-- `IUserNotificationEmailAddressResolver` resolves a destination at attempt time;
+- `IUserNotificationEmailAddressResolver` resolves a destination from the full notification message at attempt time;
 - `Gma.Framework.Email.IEmailSender` sends through the chosen provider.
 
 Notifications persistence never becomes an email-address directory or a credential vault. The resolver can read the product's profile/account model; the email sender adapter owns vendor credentials. Replace `IUserNotificationEmailRenderer` when product templates are required; the default renderer is plain text.
@@ -123,6 +124,18 @@ builder.Services.AddNotificationEmailAdapter(builder.Configuration);
 ```
 
 Other pipelines implement `IUserNotificationSink`, declare supported `delivery:*` tags, and set `DeliveryModes` to `Durable`. Best-effort live sinks set `BestEffort`; a sink can opt into both explicitly. This prevents the publisher and durable worker from double-sending through the same adapter accidentally.
+
+### Auth integration
+
+`Gma.Modules.Notifications.Integrations.Auth` is an optional Notifications-owned bridge. It references only `Gma.Modules.Auth.Contracts` across the module boundary and maps Auth sign-in, authentication-method, and email-verification events into mandatory V2 security notifications. Its email resolver uses the exact pending address carried by a verification event; other Auth alerts resolve the member's preferred verified email through `IAuthMemberContactReader` at delivery time.
+
+```csharp
+builder.AddModule<NotificationsModule>();
+builder.Services.AddAuthNotificationIntegration();
+builder.Services.AddNotificationEmailAdapter(builder.Configuration);
+```
+
+This bridge is deliberately outside Auth: Auth owns credential state and events, Notifications owns templates, tags, routing, retry, and delivery history. A host must still register an `IEmailSender` and enable the email adapter before mail leaves the process.
 
 ## User API
 
@@ -232,7 +245,7 @@ The module also contributes an `IUserNotificationDeliveryPolicyEvaluator`, so be
 
 - Producers reference only `Gma.Modules.Notifications.Contracts` and decide recipients, tags, policy, and safe content.
 - Products compose adapters; producer modules never reference adapter, application, domain, persistence, API, or admin projects.
-- Notifications does not query Auth/Profile tables or store provider secrets/destination addresses.
+- Notifications persistence does not query Auth/Profile tables or store provider secrets/destination addresses. Optional integration resolvers may call narrow contract readers at delivery time.
 - Durable business decisions use source-module state and integration events, never notification history or delivery receipts.
 - Live SSE/SignalR is optional and best effort; durable inbox and adapter jobs do not depend on a realtime backplane.
 - Multi-instance deployments must size database connections, lease settings, and provider limits, and must alert on pending age/exhausted counts.

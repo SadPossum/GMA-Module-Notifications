@@ -27,7 +27,7 @@ internal sealed class EmailUserNotificationSink(
         CancellationToken cancellationToken)
     {
         NotificationEmailDestinationResult destination = await addressResolver
-            .ResolveAsync(request.Message.ScopeId, request.Message.UserId, cancellationToken)
+            .ResolveAsync(request.Message, cancellationToken)
             .ConfigureAwait(false);
         if (destination.Outcome == NotificationEmailDestinationOutcome.Retry)
         {

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="$(GmaModuleAuthRoot)Gma.Modules.Auth.Contracts\Gma.Modules.Auth.Contracts.csproj" />
+    <ProjectReference Include="..\Gma.Modules.Notifications.Adapters.Email\Gma.Modules.Notifications.Adapters.Email.csproj" />
+    <ProjectReference Include="..\Gma.Modules.Notifications.Application\Gma.Modules.Notifications.Application.csproj" />
+    <ProjectReference Include="..\Gma.Modules.Notifications.Contracts\Gma.Modules.Notifications.Contracts.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Email\Gma.Framework.Email\Gma.Framework.Email.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Messaging\Gma.Framework.Messaging\Gma.Framework.Messaging.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Notifications\Gma.Framework.Notifications\Gma.Framework.Notifications.csproj" />
+  </ItemGroup>
+</Project>

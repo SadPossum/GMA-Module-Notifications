@@ -26,6 +26,7 @@
   </Folder>
   <Folder Name="/src/Adapters/">
     <Project Path="src/Gma.Modules.Notifications.Adapters.Email/Gma.Modules.Notifications.Adapters.Email.csproj" />
+    <Project Path="src/Gma.Modules.Notifications.Integrations.Auth/Gma.Modules.Notifications.Integrations.Auth.csproj" />
   </Folder>
   <Folder Name="/src/Api/">
     <Project Path="src/Gma.Modules.Notifications.Api/Gma.Modules.Notifications.Api.csproj" />

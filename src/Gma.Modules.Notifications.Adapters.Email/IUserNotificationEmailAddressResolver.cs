@@ -1,9 +1,10 @@
 namespace Gma.Modules.Notifications.Adapters.Email;
 
+using Gma.Framework.Notifications;
+
 public interface IUserNotificationEmailAddressResolver
 {
     ValueTask<NotificationEmailDestinationResult> ResolveAsync(
-        string scopeId,
-        string userId,
+        UserNotificationMessage message,
         CancellationToken cancellationToken = default);
 }

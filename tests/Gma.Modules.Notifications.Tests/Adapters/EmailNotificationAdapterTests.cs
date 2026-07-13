@@ -118,8 +118,7 @@ public sealed class EmailNotificationAdapterTests
         : IUserNotificationEmailAddressResolver
     {
         public ValueTask<NotificationEmailDestinationResult> ResolveAsync(
-            string scopeId,
-            string userId,
+            UserNotificationMessage message,
             CancellationToken cancellationToken = default) =>
             ValueTask.FromResult(result);
     }
