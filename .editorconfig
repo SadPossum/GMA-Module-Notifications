@@ -14,6 +14,7 @@ root = true
 # All Files
 [*]
 charset = utf-8
+end_of_line = lf
 indent_style = space
 indent_size = 4
 insert_final_newline = true
@@ -440,7 +441,6 @@ dotnet_naming_rule.parameters_rule.symbols              = parameters_group
 dotnet_naming_rule.parameters_rule.style = camel_case_style
 dotnet_naming_rule.parameters_rule.severity = warning
 tab_width = 4
-end_of_line = crlf
 
 ##########################################
 # License
