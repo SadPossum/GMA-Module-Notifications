@@ -231,7 +231,13 @@ internal sealed class NotificationHistoryRepository(NotificationsDbContext dbCon
                 cancellationToken)
             .ConfigureAwait(false);
 
-        return notification is not null && notification.MarkRead(readAtUtc);
+        if (notification is null)
+        {
+            return false;
+        }
+
+        notification.MarkRead(readAtUtc);
+        return true;
     }
 
     public async Task<int> MarkAllReadAsync(

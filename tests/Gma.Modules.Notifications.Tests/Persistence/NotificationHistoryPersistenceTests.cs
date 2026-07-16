@@ -205,6 +205,9 @@ public sealed class NotificationHistoryPersistenceTests
         Result<Unit> markOne = await dispatcher.SendAsync(
             new MarkNotificationReadCommand(notificationId, UserSubject("user-a"), "tenant-a"),
             CancellationToken.None);
+        Result<Unit> markOneAgain = await dispatcher.SendAsync(
+            new MarkNotificationReadCommand(notificationId, UserSubject("user-a"), "tenant-a"),
+            CancellationToken.None);
         Result<NotificationHistoryListResponse> unreadAfterOne = await dispatcher.QueryAsync(
             new ListNotificationHistoryQuery(UserSubject("user-a"), "tenant-a", UnreadOnly: true),
             CancellationToken.None);
@@ -213,6 +216,7 @@ public sealed class NotificationHistoryPersistenceTests
             CancellationToken.None);
 
         Assert.True(markOne.IsSuccess);
+        Assert.True(markOneAgain.IsSuccess);
         Assert.True(unreadAfterOne.IsSuccess);
         Assert.Single(unreadAfterOne.Value.Items);
         Assert.True(markAll.IsSuccess);

@@ -1,7 +1,6 @@
 namespace Gma.Modules.Notifications.Api;
 
 using System.Net.ServerSentEvents;
-using System.Security.Claims;
 using Gma.Framework.AccessControl;
 using Gma.Framework.Api.Modules;
 using Gma.Framework.Api.Observability;
@@ -9,10 +8,8 @@ using Gma.Framework.Api.Results;
 using Gma.Framework.Api.Scoping;
 using Gma.Framework.Cqrs;
 using Gma.Framework.ModuleComposition;
-using Gma.Framework.Naming;
 using Gma.Framework.Results;
 using Gma.Framework.Scoping;
-using Gma.Framework.Security;
 using Gma.Modules.Notifications.Application;
 using Gma.Modules.Notifications.Application.Commands;
 using Gma.Modules.Notifications.Application.Queries;
@@ -23,6 +20,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Timeouts;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -33,6 +31,7 @@ public sealed class NotificationsModule : IModule
     public void AddServices(IHostApplicationBuilder builder)
     {
         builder.SelectModuleProfile(NotificationsProfiles.Default, "Gma.Modules.Notifications.Api");
+        builder.Services.TryAddScoped<INotificationUserScopeAuthorizer, TokenScopeNotificationUserScopeAuthorizer>();
         builder.Services.AddNotificationsApplication(builder.Configuration);
         builder.AddNotificationsPersistence();
     }
@@ -50,7 +49,7 @@ public sealed class NotificationsModule : IModule
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -60,7 +59,8 @@ public sealed class NotificationsModule : IModule
                 cancellationToken).ConfigureAwait(false);
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireScope();
+            .RequireScope()
+            .RequireNotificationUserScope();
 
         group.MapPut("/preferences/{tagKey}", async (
             string tagKey,
@@ -70,7 +70,7 @@ public sealed class NotificationsModule : IModule
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -84,7 +84,8 @@ public sealed class NotificationsModule : IModule
                 cancellationToken).ConfigureAwait(false);
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireScope();
+            .RequireScope()
+            .RequireNotificationUserScope();
 
         group.MapGet("/", async (
             int? page,
@@ -95,7 +96,7 @@ public sealed class NotificationsModule : IModule
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -111,7 +112,8 @@ public sealed class NotificationsModule : IModule
 
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireScope();
+            .RequireScope()
+            .RequireNotificationUserScope();
 
         group.MapGet("/broadcasts", async (
             int? page,
@@ -122,7 +124,7 @@ public sealed class NotificationsModule : IModule
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -139,7 +141,8 @@ public sealed class NotificationsModule : IModule
 
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireScope();
+            .RequireScope()
+            .RequireNotificationUserScope();
 
         group.MapGet("/broadcasts/{broadcastId:guid}", async (
             Guid broadcastId,
@@ -148,7 +151,7 @@ public sealed class NotificationsModule : IModule
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -163,7 +166,8 @@ public sealed class NotificationsModule : IModule
 
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireScope();
+            .RequireScope()
+            .RequireNotificationUserScope();
 
         group.MapPost("/broadcasts/{broadcastId:guid}/read", async (
             Guid broadcastId,
@@ -172,7 +176,7 @@ public sealed class NotificationsModule : IModule
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -187,7 +191,8 @@ public sealed class NotificationsModule : IModule
 
             return result.IsSuccess ? Results.NoContent() : result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireScope();
+            .RequireScope()
+            .RequireNotificationUserScope();
 
         group.MapPost("/broadcasts/read-all", async (
             HttpContext httpContext,
@@ -195,7 +200,7 @@ public sealed class NotificationsModule : IModule
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -209,7 +214,8 @@ public sealed class NotificationsModule : IModule
 
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireScope();
+            .RequireScope()
+            .RequireNotificationUserScope();
 
         group.MapGet("/broadcasts/stream", async (
             long? afterSequence,
@@ -220,7 +226,7 @@ public sealed class NotificationsModule : IModule
             IOptions<NotificationStreamOptions> streamOptions,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -268,6 +274,7 @@ public sealed class NotificationsModule : IModule
             return stream;
         })
             .RequireScope()
+            .RequireNotificationUserScope()
             .DisableRequestTimeout();
 
         group.MapGet("/{notificationId:guid}", async (
@@ -277,7 +284,7 @@ public sealed class NotificationsModule : IModule
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -288,7 +295,8 @@ public sealed class NotificationsModule : IModule
 
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireScope();
+            .RequireScope()
+            .RequireNotificationUserScope();
 
         group.MapPost("/{notificationId:guid}/read", async (
             Guid notificationId,
@@ -297,7 +305,7 @@ public sealed class NotificationsModule : IModule
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -308,7 +316,8 @@ public sealed class NotificationsModule : IModule
 
             return result.IsSuccess ? Results.NoContent() : result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireScope();
+            .RequireScope()
+            .RequireNotificationUserScope();
 
         group.MapPost("/read-all", async (
             HttpContext httpContext,
@@ -316,7 +325,7 @@ public sealed class NotificationsModule : IModule
             IRequestDispatcher dispatcher,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -327,7 +336,8 @@ public sealed class NotificationsModule : IModule
 
             return result.ToHttpResult(PublicErrorStatusCodes);
         })
-            .RequireScope();
+            .RequireScope()
+            .RequireNotificationUserScope();
 
         group.MapGet("/history/stream", async (
             long? afterSequence,
@@ -338,7 +348,7 @@ public sealed class NotificationsModule : IModule
             IOptions<NotificationStreamOptions> streamOptions,
             CancellationToken cancellationToken) =>
         {
-            if (!TryResolveUserContext(httpContext, scopeContext, out AccessSubject subject, out IResult? failure))
+            if (!TryResolveUserContext(httpContext, out AccessSubject subject, out IResult? failure))
             {
                 return failure;
             }
@@ -383,6 +393,7 @@ public sealed class NotificationsModule : IModule
             return stream;
         })
             .RequireScope()
+            .RequireNotificationUserScope()
             .DisableRequestTimeout();
     }
 
@@ -487,33 +498,13 @@ public sealed class NotificationsModule : IModule
 
     private static bool TryResolveUserContext(
         HttpContext httpContext,
-        IScopeContext scopeContext,
         out AccessSubject subject,
         out IResult? failure)
     {
         subject = null!;
         failure = null;
 
-        string? candidateUserId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ??
-                                  httpContext.User.FindFirstValue(ApplicationClaimNames.Subject);
-        if (!NotificationRecipientUserIds.TryNormalize(candidateUserId, out string normalizedUserId))
-        {
-            failure = Results.Unauthorized();
-            return false;
-        }
-
-        if (scopeContext.IsEnabled)
-        {
-            string? tokenScopeId = httpContext.User.FindFirstValue(ApplicationClaimNames.ScopeId);
-            if (!ScopeIds.TryNormalize(tokenScopeId, out string? normalizedTokenScopeId) ||
-                !string.Equals(normalizedTokenScopeId, scopeContext.ScopeId, StringComparison.Ordinal))
-            {
-                failure = Results.Forbid();
-                return false;
-            }
-        }
-
-        if (!AccessSubject.TryCreate(AccessSubjectKind.User, normalizedUserId, out AccessSubject? resolvedSubject))
+        if (!NotificationUserContext.TryResolveSubject(httpContext.User, out AccessSubject? resolvedSubject))
         {
             failure = Results.Unauthorized();
             return false;
