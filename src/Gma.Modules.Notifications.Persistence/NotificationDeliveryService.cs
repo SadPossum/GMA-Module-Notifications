@@ -35,15 +35,12 @@ internal sealed class NotificationDeliveryService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using PeriodicTimer timer = new(TimeSpan.FromSeconds(options.Value.PollIntervalSeconds));
         while (!stoppingToken.IsCancellationRequested)
         {
+            int processedCount = 0;
             try
             {
-                Guid[] deliveryIds = await this.ClaimAsync(stoppingToken).ConfigureAwait(false);
-                await Task.WhenAll(deliveryIds.Select(deliveryId => this.DeliverAsync(deliveryId, stoppingToken)))
-                    .ConfigureAwait(false);
-
+                processedCount = await this.ProcessAvailableBatchAsync(stoppingToken).ConfigureAwait(false);
                 await this.RefreshBacklogAsync(stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -57,9 +54,18 @@ internal sealed class NotificationDeliveryService(
                     exception.GetType().Name);
             }
 
+            if (processedCount == options.Value.BatchSize)
+            {
+                await Task.Yield();
+                continue;
+            }
+
             try
             {
-                await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false);
+                await Task.Delay(
+                        TimeSpan.FromSeconds(options.Value.PollIntervalSeconds),
+                        stoppingToken)
+                    .ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -68,43 +74,72 @@ internal sealed class NotificationDeliveryService(
         }
     }
 
-    internal async Task<Guid[]> ClaimAsync(CancellationToken cancellationToken)
+    internal async Task<int> ProcessAvailableBatchAsync(CancellationToken cancellationToken)
     {
+        int processedCount = 0;
+        while (processedCount < options.Value.BatchSize)
+        {
+            int waveSize = Math.Min(
+                options.Value.MaxConcurrency,
+                options.Value.BatchSize - processedCount);
+            Guid[] deliveryIds = await this.ClaimAsync(waveSize, cancellationToken).ConfigureAwait(false);
+            if (deliveryIds.Length == 0)
+            {
+                break;
+            }
+
+            await Task.WhenAll(deliveryIds.Select(deliveryId => this.DeliverAsync(deliveryId, cancellationToken)))
+                .ConfigureAwait(false);
+            processedCount += deliveryIds.Length;
+        }
+
+        return processedCount;
+    }
+
+    internal async Task<Guid[]> ClaimAsync(int maximumCount, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(maximumCount, 1);
+
         using IServiceScope scope = scopeFactory.CreateScope();
         NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
         DateTimeOffset nowUtc = clock.UtcNow;
         DateTimeOffset lockedUntilUtc = nowUtc.AddSeconds(options.Value.LeaseSeconds);
 
-        await using Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction =
-            await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
-                .ConfigureAwait(false);
-        NotificationDelivery[] candidates = await dbContext.NotificationDeliveries
-            .IgnoreQueryFilters()
-            .Where(delivery =>
-                delivery.Attempts < delivery.MaxAttempts &&
-                (delivery.Status == NotificationDeliveryStatus.Pending ||
-                 delivery.Status == NotificationDeliveryStatus.RetryScheduled ||
-                 delivery.Status == NotificationDeliveryStatus.Processing) &&
-                (delivery.NextAttemptAtUtc == null || delivery.NextAttemptAtUtc <= nowUtc) &&
-                (delivery.LockedUntilUtc == null || delivery.LockedUntilUtc <= nowUtc))
-            .OrderBy(delivery => delivery.NextAttemptAtUtc)
-            .ThenBy(delivery => delivery.CreatedAtUtc)
-            .Take(Math.Min(options.Value.BatchSize, options.Value.MaxConcurrency))
-            .ToArrayAsync(cancellationToken)
-            .ConfigureAwait(false);
-
-        List<Guid> claimed = [];
-        foreach (NotificationDelivery delivery in candidates)
+        int claimLimit = Math.Min(maximumCount, options.Value.MaxConcurrency);
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction = null;
+        if (dbContext.Database.IsRelational())
         {
-            if (delivery.Claim(this.workerId, nowUtc, lockedUntilUtc - nowUtc).IsSuccess)
-            {
-                claimed.Add(delivery.Id);
-            }
+            transaction = await dbContext.Database
+                .BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken)
+                .ConfigureAwait(false);
         }
 
-        await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return claimed.ToArray();
+        await using (transaction)
+        {
+            NotificationDelivery[] candidates = await LoadClaimCandidatesAsync(
+                    dbContext,
+                    nowUtc,
+                    claimLimit,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            List<Guid> claimed = [];
+            foreach (NotificationDelivery delivery in candidates)
+            {
+                if (delivery.Claim(this.workerId, nowUtc, lockedUntilUtc - nowUtc).IsSuccess)
+                {
+                    claimed.Add(delivery.Id);
+                }
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            return claimed.ToArray();
+        }
     }
 
     internal async Task DeliverAsync(Guid deliveryId, CancellationToken stoppingToken)
@@ -292,9 +327,13 @@ internal sealed class NotificationDeliveryService(
         DateTimeOffset? startedAtUtc = null)
     {
         DateTimeOffset completedAtUtc = clock.UtcNow;
-        DateTimeOffset retryAt = retryAtUtc is not null && retryAtUtc > completedAtUtc
+        DateTimeOffset requestedRetryAt = retryAtUtc is not null && retryAtUtc > completedAtUtc
             ? retryAtUtc.Value
             : completedAtUtc.Add(RetryDelay(delivery.Attempts, options.Value));
+        DateTimeOffset maximumRetryAt = completedAtUtc.AddMinutes(options.Value.RetryMaxMinutes);
+        DateTimeOffset retryAt = requestedRetryAt <= maximumRetryAt
+            ? requestedRetryAt
+            : maximumRetryAt;
         if (delivery.MarkRetry(this.workerId, completedAtUtc, code, retryAt).IsFailure)
         {
             return;
@@ -431,4 +470,63 @@ internal sealed class NotificationDeliveryService(
         string.IsNullOrWhiteSpace(configured)
             ? WorkerIds.Create(Environment.MachineName, idGenerator.NewId())
             : WorkerIds.Normalize(configured);
+
+    private static Task<NotificationDelivery[]> LoadClaimCandidatesAsync(
+        NotificationsDbContext dbContext,
+        DateTimeOffset nowUtc,
+        int claimLimit,
+        CancellationToken cancellationToken)
+    {
+        string pending = NotificationRoutingSemanticNames.DeliveryStatus(NotificationDeliveryStatus.Pending);
+        string retryScheduled = NotificationRoutingSemanticNames.DeliveryStatus(NotificationDeliveryStatus.RetryScheduled);
+        string processing = NotificationRoutingSemanticNames.DeliveryStatus(NotificationDeliveryStatus.Processing);
+
+        if (dbContext.Database.IsNpgsql())
+        {
+            return dbContext.NotificationDeliveries
+                .FromSqlInterpolated($"""
+                    SELECT *
+                    FROM "notifications"."deliveries"
+                    WHERE "Attempts" < "MaxAttempts"
+                      AND "Status" IN ({pending}, {retryScheduled}, {processing})
+                      AND ("NextAttemptAtUtc" IS NULL OR "NextAttemptAtUtc" <= {nowUtc})
+                      AND ("LockedUntilUtc" IS NULL OR "LockedUntilUtc" <= {nowUtc})
+                    ORDER BY "NextAttemptAtUtc" NULLS FIRST, "CreatedAtUtc"
+                    LIMIT {claimLimit}
+                    FOR UPDATE SKIP LOCKED
+                    """)
+                .IgnoreQueryFilters()
+                .ToArrayAsync(cancellationToken);
+        }
+
+        if (dbContext.Database.IsSqlServer())
+        {
+            return dbContext.NotificationDeliveries
+                .FromSqlInterpolated($"""
+                    SELECT TOP ({claimLimit}) *
+                    FROM [notifications].[deliveries] WITH (UPDLOCK, READPAST, ROWLOCK)
+                    WHERE [Attempts] < [MaxAttempts]
+                      AND [Status] IN ({pending}, {retryScheduled}, {processing})
+                      AND ([NextAttemptAtUtc] IS NULL OR [NextAttemptAtUtc] <= {nowUtc})
+                      AND ([LockedUntilUtc] IS NULL OR [LockedUntilUtc] <= {nowUtc})
+                    ORDER BY [Status], [NextAttemptAtUtc], [LockedUntilUtc], [CreatedAtUtc]
+                    """)
+                .IgnoreQueryFilters()
+                .ToArrayAsync(cancellationToken);
+        }
+
+        return dbContext.NotificationDeliveries
+            .IgnoreQueryFilters()
+            .Where(delivery =>
+                delivery.Attempts < delivery.MaxAttempts &&
+                (delivery.Status == NotificationDeliveryStatus.Pending ||
+                 delivery.Status == NotificationDeliveryStatus.RetryScheduled ||
+                 delivery.Status == NotificationDeliveryStatus.Processing) &&
+                (delivery.NextAttemptAtUtc == null || delivery.NextAttemptAtUtc <= nowUtc) &&
+                (delivery.LockedUntilUtc == null || delivery.LockedUntilUtc <= nowUtc))
+            .OrderBy(delivery => delivery.NextAttemptAtUtc)
+            .ThenBy(delivery => delivery.CreatedAtUtc)
+            .Take(claimLimit)
+            .ToArrayAsync(cancellationToken);
+    }
 }

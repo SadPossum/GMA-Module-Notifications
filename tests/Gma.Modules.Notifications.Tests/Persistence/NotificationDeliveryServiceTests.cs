@@ -168,6 +168,77 @@ public sealed class NotificationDeliveryServiceTests
         Assert.DoesNotContain("secret-address", attempt.Code, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Durable_worker_clamps_adapter_retry_time_to_the_configured_maximum()
+    {
+        InMemoryDatabaseRoot databaseRoot = new();
+        string databaseName = $"delivery-worker-retry-bound-{Guid.NewGuid():N}";
+        ServiceCollection services = new();
+        services.AddMetrics();
+        services.AddSingleton<IScopeContext>(new TestScopeContext("tenant-a"));
+        services.AddDbContext<NotificationsDbContext>(options =>
+            options.UseInMemoryDatabase(databaseName, databaseRoot));
+        await using ServiceProvider serviceProvider = services.BuildServiceProvider();
+        Guid notificationId = Guid.CreateVersion7();
+        Guid deliveryId = Guid.CreateVersion7();
+        const string workerId = "notification-test-worker";
+
+        await using (AsyncServiceScope seedScope = serviceProvider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext = seedScope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
+            dbContext.UserNotifications.Add(UserNotification.Create(
+                notificationId,
+                "tenant-a",
+                "user-a",
+                "auth",
+                "auth.account-accessed",
+                1,
+                "New sign-in",
+                null,
+                DomainSeverity.Warning,
+                Now,
+                Now,
+                "{}").Value);
+            NotificationDelivery delivery = NotificationDelivery.CreatePending(
+                deliveryId,
+                "tenant-a",
+                notificationId,
+                NotificationTags.Email,
+                FutureRetrySink.Provider,
+                Now).Value;
+            Assert.True(delivery.Claim(workerId, Now, TimeSpan.FromMinutes(1)).IsSuccess);
+            dbContext.NotificationDeliveries.Add(delivery);
+            await dbContext.SaveChangesAsync();
+        }
+
+        NotificationDeliveryOptions deliveryOptions = new()
+        {
+            WorkerId = workerId,
+            LeaseSeconds = 60,
+            RetryMaxMinutes = 30
+        };
+        NotificationDeliveryMetrics metrics = new(
+            serviceProvider.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(),
+            Options.Create(new ApplicationIdentityOptions { Namespace = "notification-tests" }));
+        NotificationDeliveryService worker = new(
+            serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            new NotificationDeliveryAdapterCatalog([new FutureRetrySink()]),
+            new FixedClock(Now.AddSeconds(1)),
+            new TestIdGenerator(),
+            Options.Create(deliveryOptions),
+            metrics,
+            NullLogger<NotificationDeliveryService>.Instance);
+
+        await worker.DeliverAsync(deliveryId, CancellationToken.None);
+
+        await using AsyncServiceScope assertionScope = serviceProvider.CreateAsyncScope();
+        NotificationDelivery stored = await assertionScope.ServiceProvider
+            .GetRequiredService<NotificationsDbContext>()
+            .NotificationDeliveries
+            .SingleAsync();
+        Assert.Equal(Now.AddSeconds(1).AddMinutes(30), stored.NextAttemptAtUtc);
+    }
+
     private sealed class TestDurableSink : IUserNotificationSink
     {
         public const string Provider = "test-email";
@@ -194,6 +265,22 @@ public sealed class NotificationDeliveryServiceTests
             NotificationSinkDeliveryRequest request,
             CancellationToken cancellationToken) =>
             throw new InvalidOperationException("secret-address@example.com");
+    }
+
+    private sealed class FutureRetrySink : IUserNotificationSink
+    {
+        public const string Provider = "future-retry-email";
+
+        public string ProviderName => Provider;
+        public IReadOnlyCollection<string> DeliveryTags => [NotificationTags.Email];
+        public NotificationSinkDeliveryMode DeliveryModes => NotificationSinkDeliveryMode.Durable;
+
+        public ValueTask<NotificationSinkDeliveryResult> DeliverAsync(
+            NotificationSinkDeliveryRequest request,
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult(NotificationSinkDeliveryResult.Retry(
+                "provider-backoff",
+                Now.AddDays(2)));
     }
 
     private sealed class FixedClock(DateTimeOffset utcNow) : ISystemClock

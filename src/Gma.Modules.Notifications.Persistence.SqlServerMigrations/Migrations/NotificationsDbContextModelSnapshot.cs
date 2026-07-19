@@ -130,6 +130,8 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("StreamSequence");
+
                     b.HasIndex("Audience", "ScopeId", "OccurredAtUtc");
 
                     b.HasIndex("Audience", "ScopeId", "StreamSequence");
@@ -439,6 +441,8 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("StreamSequence"));
 
                     b.HasKey("Id");
+
+                    b.HasIndex("StreamSequence");
 
                     b.HasIndex("ScopeId", "StreamSequence");
 

@@ -13,6 +13,7 @@ using Gma.Framework.Scoping;
 using Gma.Modules.Notifications.Admin.Contracts;
 using Gma.Modules.Notifications.Application;
 using Gma.Modules.Notifications.Application.Commands;
+using Gma.Modules.Notifications.Application.Ports;
 using Gma.Modules.Notifications.Application.Queries;
 using Gma.Modules.Notifications.Contracts;
 using Gma.Modules.Notifications.Persistence;
@@ -32,6 +33,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
         builder.SelectModuleProfile(NotificationsProfiles.Default, "Gma.Modules.Notifications.AdminApi");
         builder.Services.AddNotificationsApplication(builder.Configuration);
         builder.AddNotificationsPersistence();
+        builder.AddNotificationsDurableStreams();
     }
 
     public void MapEndpoints(IEndpointRouteBuilder endpoints)
@@ -392,6 +394,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
             IAdminActorContext actorContext,
             IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
+            INotificationStreamPulse streamPulse,
             ILogger<NotificationsAdminApiModule> logger,
             IOptions<NotificationStreamOptions> streamOptions,
             CancellationToken cancellationToken) =>
@@ -437,6 +440,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
                             actorId,
                             cursor,
                             streamOptions.Value,
+                            streamPulse,
                             logger,
                             httpContext.RequestAborted)));
                 },
@@ -449,6 +453,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
             HttpContext httpContext,
             AdminApiExecutor executor,
             IRequestDispatcher dispatcher,
+            INotificationStreamPulse streamPulse,
             ILogger<NotificationsAdminApiModule> logger,
             IOptions<NotificationStreamOptions> streamOptions,
             CancellationToken cancellationToken) =>
@@ -488,6 +493,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
                             userId,
                             cursor,
                             streamOptions.Value,
+                            streamPulse,
                             logger,
                             httpContext.RequestAborted)));
                 },
@@ -513,19 +519,20 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
             new GetNotificationBroadcastStreamCursorQuery(scopeId, recipientKind, recipientId),
             cancellationToken);
 
-    private static async IAsyncEnumerable<SseItem<AdminNotificationHistoryItem>> StreamTenantHistoryAsync(
+    private static async IAsyncEnumerable<SseItem<object?>> StreamTenantHistoryAsync(
         IRequestDispatcher dispatcher,
         string? userId,
         long initialCursor,
         NotificationStreamOptions options,
+        INotificationStreamPulse streamPulse,
         ILogger logger,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
         long afterSequence = initialCursor;
-        using PeriodicTimer pollTimer = new(options.PollInterval);
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            long observedVersion = streamPulse.CaptureVersion(NotificationStreamKind.History);
             Result<IReadOnlyList<AdminNotificationHistoryItem>> result = await dispatcher.QueryAsync(
                 new StreamTenantNotificationHistoryQuery(userId, afterSequence, options.BatchSize),
                 cancellationToken).ConfigureAwait(false);
@@ -539,31 +546,43 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
             foreach (AdminNotificationHistoryItem item in result.Value)
             {
                 afterSequence = item.StreamSequence;
-                yield return new SseItem<AdminNotificationHistoryItem>(item, "notification");
+                yield return new SseItem<object?>(item, "notification");
             }
 
-            if (!await pollTimer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            if (result.Value.Count == options.BatchSize)
             {
-                yield break;
+                continue;
+            }
+
+            bool changed = await streamPulse.WaitForChangeAsync(
+                    NotificationStreamKind.History,
+                    observedVersion,
+                    options.HeartbeatInterval,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (!changed)
+            {
+                yield return new SseItem<object?>(null, "heartbeat");
             }
         }
     }
 
-    private static async IAsyncEnumerable<SseItem<NotificationBroadcastItem>> StreamBroadcastsAsync(
+    private static async IAsyncEnumerable<SseItem<object?>> StreamBroadcastsAsync(
         IRequestDispatcher dispatcher,
         string? scopeId,
         NotificationBroadcastRecipientKind recipientKind,
         string recipientId,
         long initialCursor,
         NotificationStreamOptions options,
+        INotificationStreamPulse streamPulse,
         ILogger logger,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
         long afterSequence = initialCursor;
-        using PeriodicTimer pollTimer = new(options.PollInterval);
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            long observedVersion = streamPulse.CaptureVersion(NotificationStreamKind.Broadcasts);
             Result<IReadOnlyList<NotificationBroadcastItem>> result = await dispatcher.QueryAsync(
                 new StreamNotificationBroadcastsQuery(
                     scopeId,
@@ -582,12 +601,23 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
             foreach (NotificationBroadcastItem item in result.Value)
             {
                 afterSequence = item.StreamSequence;
-                yield return new SseItem<NotificationBroadcastItem>(item, "notification-broadcast");
+                yield return new SseItem<object?>(item, "notification-broadcast");
             }
 
-            if (!await pollTimer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            if (result.Value.Count == options.BatchSize)
             {
-                yield break;
+                continue;
+            }
+
+            bool changed = await streamPulse.WaitForChangeAsync(
+                    NotificationStreamKind.Broadcasts,
+                    observedVersion,
+                    options.HeartbeatInterval,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (!changed)
+            {
+                yield return new SseItem<object?>(null, "heartbeat");
             }
         }
     }

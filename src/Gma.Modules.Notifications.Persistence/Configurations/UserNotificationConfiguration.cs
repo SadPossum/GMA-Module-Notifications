@@ -80,5 +80,6 @@ internal sealed class UserNotificationConfiguration : IEntityTypeConfiguration<U
         builder.HasIndex(notification => new { notification.ScopeId, notification.Recipient, notification.StreamSequence });
         builder.HasIndex(notification => new { notification.ScopeId, notification.StreamSequence });
         builder.HasIndex(notification => new { notification.ScopeId, notification.IsInboxVisible, notification.CreatedAtUtc });
+        builder.HasIndex(notification => notification.StreamSequence);
     }
 }

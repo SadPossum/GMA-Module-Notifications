@@ -3,6 +3,7 @@ using System;
 using Gma.Modules.Notifications.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
 {
     [DbContext(typeof(NotificationsDbContext))]
-    partial class NotificationsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260719214824_OptimizeNotificationStreamHeads")]
+    partial class OptimizeNotificationStreamHeads
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

@@ -19,6 +19,14 @@ internal sealed class NotificationStreamOptionsValidator : IValidateOptions<Noti
                 $"{NotificationStreamOptions.SectionName}:PollInterval must be between 250 milliseconds and 1 minute.");
         }
 
+        if (options.HeartbeatInterval < TimeSpan.FromSeconds(5) ||
+            options.HeartbeatInterval > TimeSpan.FromMinutes(5) ||
+            options.HeartbeatInterval < options.PollInterval)
+        {
+            return ValidateOptionsResult.Fail(
+                $"{NotificationStreamOptions.SectionName}:HeartbeatInterval must be between 5 seconds and 5 minutes and cannot be shorter than PollInterval.");
+        }
+
         return ValidateOptionsResult.Success;
     }
 }

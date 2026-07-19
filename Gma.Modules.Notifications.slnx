@@ -1,9 +1,12 @@
 <Solution>
   <Folder Name="/docs/">
     <File Path="docs/README.md" />
+    <File Path="docs/notifications-production-hardening-task.md" />
   </Folder>
   <Folder Name="/eng/">
     <File Path="eng/bootstrap-source-roots.ps1" />
+    <File Path="eng/check-boundaries.ps1" />
+    <File Path="eng/check-migrations.ps1" />
   </Folder>
   <Folder Name="/.github/workflows/">
     <File Path=".github/workflows/validate.yml" />
@@ -45,6 +48,7 @@
     <Project Path="src/Gma.Modules.Notifications.Persistence/Gma.Modules.Notifications.Persistence.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Gma.Modules.Notifications.IntegrationTests/Gma.Modules.Notifications.IntegrationTests.csproj" />
     <Project Path="tests/Gma.Modules.Notifications.Tests/Gma.Modules.Notifications.Tests.csproj" />
   </Folder>
 </Solution>

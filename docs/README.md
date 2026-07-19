@@ -1,5 +1,7 @@
 # Notifications Module
 
+Production hardening work is tracked in [Notifications Production Hardening Task](notifications-production-hardening-task.md).
+
 The optional Notifications module owns durable, addressed user notifications. It stores inbox history and read state, persists a tenant-scoped tag catalog and user preferences, plans durable adapter deliveries, records immutable attempts/receipts, and exposes user and operator APIs. It also owns durable audience broadcasts.
 
 Notifications are not a backend event bus or an authorization engine. Producer modules decide the recipient and semantic intent. Integration events and the source module outbox remain the authoritative durable business path.
@@ -78,7 +80,7 @@ Routes map a delivery tag to one active adapter provider. If no explicit route e
 The projector writes notification history, tags, and all planned delivery jobs in the Notifications unit of work. Delivery is then:
 
 - at least once;
-- claimed in bounded batches under a serializable transaction;
+- claimed in bounded batches with provider-specific skip-locked row leases on PostgreSQL and SQL Server;
 - protected by expiring worker leases;
 - executed with bounded concurrency;
 - retried with bounded exponential backoff;
@@ -90,6 +92,8 @@ The database prevents duplicate plans for the same notification, delivery tag, a
 Adapter exception messages are logged only by exception type and are never stored. Persisted attempt codes are bounded semantic codes. Notification content, tenant/user ids, destinations, and payload fields are not metric dimensions.
 
 Operators may retry `rejected`, `exhausted`, and `unroutable` jobs after repairing a provider or route. A retry resets the job to pending while retaining the previous immutable attempt history.
+
+`BatchSize` bounds one healthy drain cycle; `MaxConcurrency` bounds each in-process delivery wave. A full cycle immediately starts another cycle without waiting for the poll interval. Multiple replicas lease disjoint rows, and expired leases can be reclaimed after a worker exits. An adapter-provided retry timestamp is clamped to `RetryMaxMinutes` so a provider cannot accidentally strand work beyond the host's configured recovery bound.
 
 ## Email Adapter And PII Boundary
 
@@ -149,6 +153,8 @@ All user endpoints require authentication and scope context. Tenant claims must 
 
 History exposes only rows whose V2 plan made `delivery:web` visible. Suppressed email-only jobs do not leak into the web inbox.
 
+Durable SSE streams use one database sequence-head monitor per process, rather than one database polling loop per connection. The monitor wakes only the affected stream kind, full result batches drain immediately, and an idle connection receives a `heartbeat` event with `null` data. Heartbeat timeout also performs a fallback query, so a stream recovers if the monitor temporarily cannot reach the database. This is process-local coordination, not a multi-region backplane; each application replica runs its own monitor.
+
 ## Admin API
 
 Admin endpoints use the shared audited executor and scoped RBAC permissions.
@@ -184,6 +190,8 @@ SQL Server and PostgreSQL have provider-specific migrations. The V2 migration ba
 
 Retention is disabled until the product chooses policy. When enabled, cleanup is bounded and includes old attempt rows according to `Notifications:Delivery:AttemptRetentionDays`.
 
+Notification titles, bodies, payload JSON, recipient ids, delivery destinations resolved by adapters, and provider receipts may be sensitive operational or personal data. Products must minimize producer payloads, select retention values, configure database/backups/log encryption and access controls, and verify any legal deletion requirements. The reusable module cannot select those policies for every host. Provider adapters must honor the stable delivery id as an idempotency key and must reject time-limited work after the producer-specific expiry encoded in the message or resolved by a composition-owned bridge.
+
 ```json
 {
   "Notifications": {
@@ -209,7 +217,8 @@ Retention is disabled until the product chooses policy. When enabled, cleanup is
     },
     "DurableStreams": {
       "BatchSize": 25,
-      "PollInterval": "00:00:01"
+      "PollInterval": "00:00:01",
+      "HeartbeatInterval": "00:00:15"
     }
   }
 }

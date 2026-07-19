@@ -75,4 +75,24 @@ public static class DependencyInjection
 
         return builder;
     }
+
+    public static IHostApplicationBuilder AddNotificationsDurableStreams(this IHostApplicationBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        if (builder.Services.Any(descriptor => descriptor.ServiceType == typeof(NotificationStreamMonitorMarker)))
+        {
+            return builder;
+        }
+
+        builder.Services.AddSingleton<NotificationStreamMonitorMarker>();
+        builder.Services.TryAddSingleton<NotificationStreamPulse>();
+        builder.Services.TryAddSingleton<INotificationStreamPulse>(provider =>
+            provider.GetRequiredService<NotificationStreamPulse>());
+        builder.Services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IHostedService, NotificationStreamMonitorService>());
+        return builder;
+    }
+
+    private sealed class NotificationStreamMonitorMarker;
 }

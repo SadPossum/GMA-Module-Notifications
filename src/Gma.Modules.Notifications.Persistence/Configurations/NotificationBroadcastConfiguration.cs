@@ -65,5 +65,6 @@ internal sealed class NotificationBroadcastConfiguration : IEntityTypeConfigurat
             .IsRequired();
         builder.HasIndex(broadcast => new { broadcast.Audience, broadcast.ScopeId, broadcast.OccurredAtUtc });
         builder.HasIndex(broadcast => new { broadcast.Audience, broadcast.ScopeId, broadcast.StreamSequence });
+        builder.HasIndex(broadcast => broadcast.StreamSequence);
     }
 }

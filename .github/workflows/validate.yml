@@ -13,7 +13,13 @@ permissions:
 
 jobs:
   validate:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout module
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -50,6 +56,56 @@ jobs:
         working-directory: gma-module-notifications
         run: dotnet build Gma.Modules.Notifications.slnx --no-restore -m:1
 
+      - name: Check boundaries
+        shell: pwsh
+        working-directory: gma-module-notifications
+        run: ./eng/check-boundaries.ps1
+
+      - name: Check migration drift
+        shell: pwsh
+        working-directory: gma-module-notifications
+        run: ./eng/check-migrations.ps1 -NoBuild
+
       - name: Test
         working-directory: gma-module-notifications
-        run: dotnet test Gma.Modules.Notifications.slnx --no-build --logger "console;verbosity=minimal"
+        run: dotnet test Gma.Modules.Notifications.slnx --no-build --filter "Category!=Docker" --logger "console;verbosity=minimal"
+
+      - name: Audit packages
+        working-directory: gma-module-notifications
+        run: dotnet list Gma.Modules.Notifications.slnx package --vulnerable --include-transitive
+
+  relational:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout module
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: gma-module-notifications
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout framework
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: SadPossum/gma-framework
+          ref: ${{ github.event_name == 'push' && github.ref_name == 'main' && 'main' || 'dev' }}
+          path: gma-framework
+          token: ${{ secrets.GMA_CI_TOKEN || github.token }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Bootstrap source roots
+        shell: pwsh
+        working-directory: gma-module-notifications
+        run: ./eng/bootstrap-source-roots.ps1 -Force
+
+      - name: Run relational integration tests
+        working-directory: gma-module-notifications
+        env:
+          GMA_REQUIRE_DOCKER_TESTS: "true"
+        run: dotnet test tests/Gma.Modules.Notifications.IntegrationTests/Gma.Modules.Notifications.IntegrationTests.csproj --logger "console;verbosity=minimal"
