@@ -1,6 +1,6 @@
 # Notifications Production Hardening Task
 
-Status: in progress
+Status: complete
 Date: 2026-07-19
 
 ## Goal
@@ -70,8 +70,14 @@ Make the optional Notifications module production-ready for durable addressed no
 
 - standalone build succeeds with warnings treated as errors;
 - 69 fast tests pass;
-- PostgreSQL integration tests prove generated stream heads, shared monitor observation, disjoint concurrent claims, bounded batch/concurrency behavior, expired-lease recovery, and concurrent idempotent broadcast read receipts; SQL Server executes and proves its provider-specific disjoint lease path;
+- four relational integration tests pass: PostgreSQL proves generated stream heads, shared monitor observation, disjoint concurrent claims, bounded batch/concurrency behavior, expired-lease recovery, translated retention queries and concurrent idempotent broadcast read receipts; SQL Server proves its provider-specific disjoint lease path and translated retention queries;
 - reusable-module boundaries and both provider migration models pass their repository guards;
 - the transitive package vulnerability audit reports no vulnerable packages.
 
-Auth/Extensions expiry enforcement, BunkFy current-assignment authorization, publication and downstream pin verification remain open before this task can be marked complete.
+## Downstream Evidence
+
+- Notifications implementation head `d5cc3ce` passes Windows, Linux and required relational CI;
+- Extensions head `ee0447f` rejects expired Auth one-time notifications and passes its Windows/Linux CI;
+- Skeleton head `adcf09e` records the hardened Notifications and Extensions heads, keeps relational internals module-owned, passes exact submodule-head and source-package guards, and passes Windows/Linux full verification;
+- BunkFy backend head `ce295c9` requires current workspace owner/member assignment for notification access, configures durable-stream heartbeats, includes the module-owned relational project, passes exact submodule-head and source-package guards, and passes Windows/Linux full verification plus 32 Docker integration tests;
+- no framework code or product-specific rule moved into Notifications: generic primitives remain in Framework, Auth mapping remains in Extensions, workspace authorization remains in BunkFy, and provider/deployment policy remains host-owned.
