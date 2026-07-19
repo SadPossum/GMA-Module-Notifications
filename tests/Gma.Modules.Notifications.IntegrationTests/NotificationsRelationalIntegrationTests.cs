@@ -8,6 +8,7 @@ using Gma.Framework.Scoping;
 using Gma.Modules.Notifications.Application;
 using Gma.Modules.Notifications.Application.Ports;
 using Gma.Modules.Notifications.Domain.Aggregates;
+using Gma.Modules.Notifications.Domain.Entities;
 using Gma.Modules.Notifications.IntegrationTests.Support;
 using Gma.Modules.Notifications.Persistence;
 using Gma.Modules.Notifications.Persistence.Repositories;
@@ -20,6 +21,7 @@ using Testcontainers.PostgreSql;
 using Xunit;
 using ContractRecipientKind = Gma.Modules.Notifications.Contracts.NotificationBroadcastRecipientKind;
 using DomainAudience = Gma.Modules.Notifications.Domain.ValueObjects.NotificationBroadcastAudience;
+using DomainAttemptOutcome = Gma.Modules.Notifications.Domain.ValueObjects.NotificationDeliveryAttemptOutcome;
 using DomainDeliveryStatus = Gma.Modules.Notifications.Domain.ValueObjects.NotificationDeliveryStatus;
 using DomainSeverity = Gma.Modules.Notifications.Domain.ValueObjects.NotificationSeverity;
 
@@ -82,6 +84,7 @@ public sealed class NotificationsRelationalIntegrationTests
 
         Assert.Equal(notificationSequences.Max(), pulse.CaptureVersion(NotificationStreamKind.History));
         Assert.Equal(broadcastSequences.Max(), pulse.CaptureVersion(NotificationStreamKind.Broadcasts));
+        await AssertRetentionQueriesAsync(provider);
     }
 
     [DockerFact]
@@ -143,6 +146,7 @@ public sealed class NotificationsRelationalIntegrationTests
         Assert.Equal(2, claims[0].Length);
         Assert.Equal(2, claims[1].Length);
         Assert.Empty(claims[0].Intersect(claims[1]));
+        await AssertRetentionQueriesAsync(provider);
     }
 
     [DockerFact]
@@ -245,6 +249,76 @@ public sealed class NotificationsRelationalIntegrationTests
         await dbContext.SaveChangesAsync();
     }
 
+    private static async Task AssertRetentionQueriesAsync(ServiceProvider provider)
+    {
+        DateTimeOffset old = Now.AddDays(-400);
+        UserNotification activeNotification = CreateNotification(
+            "active-retention-user",
+            "active-retention",
+            old);
+        UserNotification completedNotification = CreateNotification(
+            "completed-retention-user",
+            "completed-retention",
+            old);
+        NotificationDelivery activeDelivery = NotificationDelivery.CreatePending(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            activeNotification.Id,
+            NotificationTags.Email,
+            TrackingDeliverySink.Provider,
+            old).Value;
+        NotificationDelivery completedDelivery = NotificationDelivery.CreateDelivered(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            completedNotification.Id,
+            NotificationTags.Email,
+            TrackingDeliverySink.Provider,
+            old).Value;
+        NotificationDeliveryAttempt activeAttempt = NotificationDeliveryAttempt.Create(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            activeDelivery.Id,
+            1,
+            TrackingDeliverySink.Provider,
+            DomainAttemptOutcome.Retry,
+            old,
+            old.AddSeconds(1),
+            "rate-limited",
+            providerMessageId: null).Value;
+        NotificationDeliveryAttempt completedAttempt = NotificationDeliveryAttempt.Create(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            completedDelivery.Id,
+            1,
+            TrackingDeliverySink.Provider,
+            DomainAttemptOutcome.Delivered,
+            old,
+            old.AddSeconds(1),
+            code: null,
+            providerMessageId: "provider-message-1").Value;
+
+        await using (AsyncServiceScope seedScope = provider.CreateAsyncScope())
+        {
+            NotificationsDbContext seed = seedScope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
+            seed.UserNotifications.AddRange(activeNotification, completedNotification);
+            seed.NotificationDeliveries.AddRange(activeDelivery, completedDelivery);
+            seed.NotificationDeliveryAttempts.AddRange(activeAttempt, completedAttempt);
+            await seed.SaveChangesAsync();
+        }
+
+        await using AsyncServiceScope assertionScope = provider.CreateAsyncScope();
+        NotificationsDbContext dbContext = assertionScope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
+        UserNotification[] expiredNotifications = await NotificationRetentionService
+            .ExpiredUserNotifications(dbContext, Now.AddDays(-90), Now.AddDays(-365))
+            .ToArrayAsync();
+        NotificationDeliveryAttempt[] expiredAttempts = await NotificationRetentionService
+            .ExpiredDeliveryAttempts(dbContext, Now.AddDays(-90))
+            .ToArrayAsync();
+
+        Assert.Equal(completedNotification.Id, Assert.Single(expiredNotifications).Id);
+        Assert.Equal(completedAttempt.Id, Assert.Single(expiredAttempts).Id);
+    }
+
     private static NotificationDeliveryService CreateWorker(
         ServiceProvider provider,
         string workerId,
@@ -273,6 +347,9 @@ public sealed class NotificationsRelationalIntegrationTests
     }
 
     private static UserNotification CreateNotification(string userId, string name) =>
+        CreateNotification(userId, name, Now);
+
+    private static UserNotification CreateNotification(string userId, string name, DateTimeOffset createdAtUtc) =>
         UserNotification.Create(
             Guid.CreateVersion7(),
             "tenant-a",
@@ -283,8 +360,8 @@ public sealed class NotificationsRelationalIntegrationTests
             name,
             null,
             DomainSeverity.Info,
-            Now,
-            Now,
+            createdAtUtc,
+            createdAtUtc,
             "{}").Value;
 
     private static NotificationBroadcast CreateBroadcast(string name) =>
