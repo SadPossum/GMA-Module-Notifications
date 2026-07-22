@@ -44,8 +44,7 @@ internal sealed class NotificationHistoryWriter(
         catch (ArgumentException exception)
         {
             logger.LogWarning(
-                "User notification {NotificationId} could not be converted to a durable request because {ExceptionType} was raised.",
-                message.Id,
+                "A user notification could not be converted to a durable request because {ExceptionType} was raised.",
                 exception.GetType().Name);
         }
     }

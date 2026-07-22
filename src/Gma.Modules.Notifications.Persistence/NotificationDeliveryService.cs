@@ -221,8 +221,7 @@ internal sealed class NotificationDeliveryService(
         catch (Exception exception) when (exception is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
         {
             logger.LogWarning(
-                "Notification delivery {DeliveryId} through {Provider} failed with {ExceptionType}; no exception text was persisted.",
-                delivery.Id,
+                "Notification delivery through {Provider} failed with {ExceptionType}; no exception text was persisted.",
                 delivery.Provider.Value,
                 exception.GetType().Name);
             result = NotificationSinkDeliveryResult.Retry("adapter-exception");
