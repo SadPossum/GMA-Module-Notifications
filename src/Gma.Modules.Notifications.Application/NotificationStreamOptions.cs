@@ -8,6 +8,7 @@ public sealed class NotificationStreamOptions
     public static readonly TimeSpan DefaultPollInterval = TimeSpan.FromSeconds(1);
     public static readonly TimeSpan DefaultHeartbeatInterval = TimeSpan.FromSeconds(15);
 
+    public bool MonitorEnabled { get; set; } = true;
     public int BatchSize { get; set; } = DefaultBatchSize;
     public TimeSpan PollInterval { get; set; } = DefaultPollInterval;
     public TimeSpan HeartbeatInterval { get; set; } = DefaultHeartbeatInterval;

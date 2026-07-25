@@ -21,8 +21,30 @@ public sealed class NotificationsApplicationRegistrationTests
             .GetRequiredService<IOptions<NotificationStreamOptions>>()
             .Value;
 
+        Assert.True(options.MonitorEnabled);
         Assert.Equal(NotificationStreamOptions.DefaultBatchSize, options.BatchSize);
         Assert.Equal(NotificationStreamOptions.DefaultPollInterval, options.PollInterval);
+    }
+
+    [Fact]
+    public void Application_registration_binds_disabled_durable_stream_monitor()
+    {
+        ConfigurationBuilder configurationBuilder = new();
+        configurationBuilder.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Notifications:DurableStreams:MonitorEnabled"] = "false"
+        });
+        IConfiguration configuration = configurationBuilder.Build();
+        ServiceCollection services = new();
+
+        services.AddNotificationsApplication(configuration);
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        NotificationStreamOptions options = provider
+            .GetRequiredService<IOptions<NotificationStreamOptions>>()
+            .Value;
+
+        Assert.False(options.MonitorEnabled);
     }
 
     [Fact]

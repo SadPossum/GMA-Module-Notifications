@@ -155,6 +155,8 @@ History exposes only rows whose V2 plan made `delivery:web` visible. Suppressed 
 
 Durable SSE streams use one database sequence-head monitor per process, rather than one database polling loop per connection. The monitor wakes only the affected stream kind, full result batches drain immediately, and an idle connection receives a `heartbeat` event with `null` data. Heartbeat timeout also performs a fallback query, so a stream recovers if the monitor temporarily cannot reach the database. This is process-local coordination, not a multi-region backplane; each application replica runs its own monitor.
 
+`Notifications:DurableStreams:MonitorEnabled` defaults to `true`. Hosts that start the API only for metadata generation or another database-independent task may set it to `false`; stream endpoints and heartbeat fallback remain available, but connected clients detect new rows only on the heartbeat interval. Production serving processes should keep the monitor enabled.
+
 ## Admin API
 
 Admin endpoints use the shared audited executor and scoped RBAC permissions.
@@ -216,6 +218,7 @@ Notification titles, bodies, payload JSON, recipient ids, delivery destinations 
       "IntervalMinutes": 60
     },
     "DurableStreams": {
+      "MonitorEnabled": true,
       "BatchSize": 25,
       "PollInterval": "00:00:01",
       "HeartbeatInterval": "00:00:15"

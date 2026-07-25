@@ -89,8 +89,15 @@ public static class DependencyInjection
         builder.Services.TryAddSingleton<NotificationStreamPulse>();
         builder.Services.TryAddSingleton<INotificationStreamPulse>(provider =>
             provider.GetRequiredService<NotificationStreamPulse>());
-        builder.Services.TryAddEnumerable(
-            ServiceDescriptor.Singleton<IHostedService, NotificationStreamMonitorService>());
+        bool monitorEnabled = builder.Configuration
+            .GetSection(NotificationStreamOptions.SectionName)
+            .GetValue<bool?>(nameof(NotificationStreamOptions.MonitorEnabled)) ?? true;
+        if (monitorEnabled)
+        {
+            builder.Services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IHostedService, NotificationStreamMonitorService>());
+        }
+
         return builder;
     }
 
