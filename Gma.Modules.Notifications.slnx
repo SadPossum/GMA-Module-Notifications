@@ -35,14 +35,26 @@
     <File Path="eng/check-repository-release.ps1" />
     <File Path="eng/check-repository-security.ps1" />
   </Folder>
-  <Folder Name="/src/">
-    <Project Path="src/Gma.Modules.Notifications.Adapters.Email/Gma.Modules.Notifications.Adapters.Email.csproj" />
+  <Folder Name="/src/Admin/">
     <Project Path="src/Gma.Modules.Notifications.Admin.Contracts/Gma.Modules.Notifications.Admin.Contracts.csproj" />
     <Project Path="src/Gma.Modules.Notifications.AdminApi/Gma.Modules.Notifications.AdminApi.csproj" />
+  </Folder>
+  <Folder Name="/src/Api/">
     <Project Path="src/Gma.Modules.Notifications.Api/Gma.Modules.Notifications.Api.csproj" />
+  </Folder>
+  <Folder Name="/src/Application/">
     <Project Path="src/Gma.Modules.Notifications.Application/Gma.Modules.Notifications.Application.csproj" />
+  </Folder>
+  <Folder Name="/src/Contracts/">
     <Project Path="src/Gma.Modules.Notifications.Contracts/Gma.Modules.Notifications.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/src/Domain/">
     <Project Path="src/Gma.Modules.Notifications.Domain/Gma.Modules.Notifications.Domain.csproj" />
+  </Folder>
+  <Folder Name="/src/Email/">
+    <Project Path="src/Gma.Modules.Notifications.Adapters.Email/Gma.Modules.Notifications.Adapters.Email.csproj" />
+  </Folder>
+  <Folder Name="/src/Persistence/">
     <Project Path="src/Gma.Modules.Notifications.Persistence.PostgreSqlMigrations/Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.csproj" />
     <Project Path="src/Gma.Modules.Notifications.Persistence.SqlServerMigrations/Gma.Modules.Notifications.Persistence.SqlServerMigrations.csproj" />
     <Project Path="src/Gma.Modules.Notifications.Persistence/Gma.Modules.Notifications.Persistence.csproj" />
