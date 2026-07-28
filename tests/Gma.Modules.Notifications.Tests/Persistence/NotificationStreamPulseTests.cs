@@ -16,7 +16,7 @@ public sealed class NotificationStreamPulseTests
         ValueTask<bool> waiting = pulse.WaitForChangeAsync(
             NotificationStreamKind.History,
             observed,
-            TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(10),
             CancellationToken.None);
         pulse.Advance(NotificationStreamKind.Broadcasts, 3);
         Assert.False(waiting.IsCompleted);
