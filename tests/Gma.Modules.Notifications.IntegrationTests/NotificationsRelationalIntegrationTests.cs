@@ -49,8 +49,11 @@ public sealed class NotificationsRelationalIntegrationTests
         await using (AsyncServiceScope scope = provider.CreateAsyncScope())
         {
             NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
-            dbContext.UserNotifications.AddRange(
-                CreateNotification("user-a", "first-user-notification"),
+            await AddNotificationAsync(
+                dbContext,
+                CreateNotification("user-a", "first-user-notification"));
+            await AddNotificationAsync(
+                dbContext,
                 CreateNotification("user-a", "second-user-notification"));
             dbContext.NotificationBroadcasts.AddRange(
                 CreateBroadcast("first-broadcast"),
@@ -758,7 +761,7 @@ public sealed class NotificationsRelationalIntegrationTests
                 NotificationTags.Email,
                 TrackingDeliverySink.Provider,
                 Now).Value;
-            dbContext.UserNotifications.Add(notification);
+            await AddNotificationAsync(dbContext, notification);
             dbContext.NotificationDeliveries.Add(delivery);
         }
 
@@ -816,7 +819,8 @@ public sealed class NotificationsRelationalIntegrationTests
         await using (AsyncServiceScope seedScope = provider.CreateAsyncScope())
         {
             NotificationsDbContext seed = seedScope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
-            seed.UserNotifications.AddRange(activeNotification, completedNotification);
+            await AddNotificationAsync(seed, activeNotification);
+            await AddNotificationAsync(seed, completedNotification);
             seed.NotificationDeliveries.AddRange(activeDelivery, completedDelivery);
             seed.NotificationDeliveryAttempts.AddRange(activeAttempt, completedAttempt);
             await seed.SaveChangesAsync();
@@ -833,6 +837,18 @@ public sealed class NotificationsRelationalIntegrationTests
 
         Assert.Equal(completedNotification.Id, Assert.Single(expiredNotifications).Id);
         Assert.Equal(completedAttempt.Id, Assert.Single(expiredAttempts).Id);
+    }
+
+    private static async Task AddNotificationAsync(
+        NotificationsDbContext dbContext,
+        UserNotification notification)
+    {
+        NotificationHistoryLifecycleRepository repository = new(dbContext);
+        Assert.True(
+            await repository.RegisterAsync(
+                notification,
+                CancellationToken.None));
+        dbContext.UserNotifications.Add(notification);
     }
 
     private static NotificationDeliveryService CreateWorker(
