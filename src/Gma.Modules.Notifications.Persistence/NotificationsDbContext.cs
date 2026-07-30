@@ -12,6 +12,14 @@ public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbConte
 {
     public DbSet<UserNotification> UserNotifications => this.Set<UserNotification>();
     public DbSet<UserNotificationTag> UserNotificationTags => this.Set<UserNotificationTag>();
+    public DbSet<UserNotificationReference> UserNotificationReferences =>
+        this.Set<UserNotificationReference>();
+    public DbSet<NotificationHistoryReferenceState>
+        NotificationHistoryReferenceStates =>
+        this.Set<NotificationHistoryReferenceState>();
+    public DbSet<NotificationHistoryCloseReceipt>
+        NotificationHistoryCloseReceipts =>
+        this.Set<NotificationHistoryCloseReceipt>();
     public DbSet<NotificationTagDefinition> NotificationTagDefinitions => this.Set<NotificationTagDefinition>();
     public DbSet<NotificationPreference> NotificationPreferences => this.Set<NotificationPreference>();
     public DbSet<NotificationDeliveryRoute> NotificationDeliveryRoutes => this.Set<NotificationDeliveryRoute>();

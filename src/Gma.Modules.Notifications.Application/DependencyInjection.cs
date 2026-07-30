@@ -44,6 +44,8 @@ public static class DependencyInjection
         services.TryAddScoped<UserNotificationRequestedIntegrationEventV2Handler>();
         services.TryAddScoped<IUserNotificationRequestProjector>(provider =>
             provider.GetRequiredService<UserNotificationRequestedIntegrationEventV2Handler>());
+        services.TryAddScoped<IUserNotificationRequestProjectorV3>(provider =>
+            provider.GetRequiredService<UserNotificationRequestedIntegrationEventV2Handler>());
         services.TryAddSingleton<INotificationPreferenceEvaluator, AllowAllNotificationPreferenceEvaluator>();
         services.TryAddEnumerable(ServiceDescriptor.Scoped<
             IUserNotificationDeliveryPolicyEvaluator,
@@ -86,6 +88,12 @@ public static class DependencyInjection
             UserNotificationRequestedIntegrationEventV2.EventType,
             UserNotificationRequestedIntegrationEventV2.EventVersion,
             $"{normalizedHandlerName}-v2");
+        services.AddIntegrationEventHandler<UserNotificationRequestedIntegrationEventV3, UserNotificationRequestedIntegrationEventV2Handler>(
+            NotificationsModuleMetadata.Name,
+            normalizedProducerModule,
+            UserNotificationRequestedIntegrationEventV3.EventType,
+            UserNotificationRequestedIntegrationEventV3.EventVersion,
+            $"{normalizedHandlerName}-v3");
 
         return services;
     }

@@ -20,21 +20,48 @@ using DomainTagOrigin = Domain.ValueObjects.NotificationTagOrigin;
 [IntegrationEventHandler("user-notification-request-v2", RequiresExplicitProducerBinding = true)]
 internal sealed class UserNotificationRequestedIntegrationEventV2Handler(
     INotificationHistoryRepository historyRepository,
+    INotificationHistoryLifecycleRepository lifecycleRepository,
     INotificationRoutingRepository routingRepository,
     INotificationDeliveryAdapterCatalog adapterCatalog,
     INotificationPreferenceEvaluator preferenceEvaluator,
     IOptions<NotificationDeliveryOptions> deliveryOptions,
     ISystemClock clock,
     IIdGenerator idGenerator)
-    : IIntegrationEventHandler<UserNotificationRequestedIntegrationEventV2>, IUserNotificationRequestProjector
+    : IIntegrationEventHandler<UserNotificationRequestedIntegrationEventV2>,
+        IIntegrationEventHandler<UserNotificationRequestedIntegrationEventV3>,
+        IUserNotificationRequestProjector,
+        IUserNotificationRequestProjectorV3
 {
     public Task HandleAsync(
         UserNotificationRequestedIntegrationEventV2 integrationEvent,
         CancellationToken cancellationToken) =>
-        this.ProjectAsync(integrationEvent, cancellationToken);
+        this.ProjectAsync(
+            UserNotificationProjectionRequest.From(integrationEvent),
+            cancellationToken);
 
-    public async Task ProjectAsync(
+    public Task HandleAsync(
+        UserNotificationRequestedIntegrationEventV3 integrationEvent,
+        CancellationToken cancellationToken) =>
+        this.ProjectAsync(
+            UserNotificationProjectionRequest.From(integrationEvent),
+            cancellationToken);
+
+    public Task ProjectAsync(
         UserNotificationRequestedIntegrationEventV2 integrationEvent,
+        CancellationToken cancellationToken) =>
+        this.ProjectAsync(
+            UserNotificationProjectionRequest.From(integrationEvent),
+            cancellationToken);
+
+    public Task ProjectAsync(
+        UserNotificationRequestedIntegrationEventV3 integrationEvent,
+        CancellationToken cancellationToken) =>
+        this.ProjectAsync(
+            UserNotificationProjectionRequest.From(integrationEvent),
+            cancellationToken);
+
+    private async Task ProjectAsync(
+        UserNotificationProjectionRequest integrationEvent,
         CancellationToken cancellationToken)
     {
         if (await historyRepository.ExistsAsync(integrationEvent.EventId, cancellationToken).ConfigureAwait(false))
@@ -43,13 +70,48 @@ internal sealed class UserNotificationRequestedIntegrationEventV2Handler(
         }
 
         DateTimeOffset nowUtc = clock.UtcNow;
+        string[] tagKeys = integrationEvent.Tags
+            .Select(tag => tag.Key)
+            .ToArray();
+        Framework.Results.Result<UserNotification> notification =
+            UserNotification.Create(
+                integrationEvent.EventId,
+                integrationEvent.ScopeId,
+                integrationEvent.UserId,
+                integrationEvent.SourceModule,
+                integrationEvent.NotificationName,
+                integrationEvent.NotificationVersion,
+                integrationEvent.Title,
+                integrationEvent.Body,
+                ToDomainSeverity(integrationEvent.Severity),
+                integrationEvent.OccurredAtUtc,
+                nowUtc,
+                integrationEvent.PayloadJson,
+                tagKeys,
+                ToDomainPolicy(integrationEvent.DeliveryPolicy),
+                isInboxVisible: true,
+                integrationEvent.References
+                    .Select(ToDomainReference)
+                    .ToArray());
+        if (notification.IsFailure)
+        {
+            throw new InvalidOperationException(
+                $"Notification request {integrationEvent.EventId} could not be projected: {notification.Error.Code}.");
+        }
+
+        if (!await lifecycleRepository
+                .RegisterAsync(notification.Value, cancellationToken)
+                .ConfigureAwait(false))
+        {
+            return;
+        }
+
         IReadOnlySet<string> inactiveTags = await this.EnsureTagDefinitionsAsync(
                 integrationEvent,
                 nowUtc,
                 cancellationToken)
             .ConfigureAwait(false);
 
-        string[] tagKeys = integrationEvent.Tags.Select(tag => tag.Key).ToArray();
         IReadOnlySet<string> disabledTags = await routingRepository
             .GetDisabledTagsAsync(integrationEvent.UserId, tagKeys, cancellationToken)
             .ConfigureAwait(false);
@@ -84,27 +146,7 @@ internal sealed class UserNotificationRequestedIntegrationEventV2Handler(
                               domainSuppressed,
                               externalPreferenceAllowed);
 
-        Framework.Results.Result<UserNotification> notification = UserNotification.Create(
-            integrationEvent.EventId,
-            integrationEvent.ScopeId,
-            integrationEvent.UserId,
-            integrationEvent.SourceModule,
-            integrationEvent.NotificationName,
-            integrationEvent.NotificationVersion,
-            integrationEvent.Title,
-            integrationEvent.Body,
-            ToDomainSeverity(integrationEvent.Severity),
-            integrationEvent.OccurredAtUtc,
-            nowUtc,
-            integrationEvent.PayloadJson,
-            tagKeys,
-            ToDomainPolicy(integrationEvent.DeliveryPolicy),
-            webVisible);
-        if (notification.IsFailure)
-        {
-            throw new InvalidOperationException(
-                $"Notification request {integrationEvent.EventId} could not be projected: {notification.Error.Code}.");
-        }
+        notification.Value.SetInboxVisibility(webVisible);
 
         List<NotificationDelivery> deliveries = [];
         foreach (string deliveryTag in deliveryTags)
@@ -133,7 +175,7 @@ internal sealed class UserNotificationRequestedIntegrationEventV2Handler(
     }
 
     private async Task<IReadOnlySet<string>> EnsureTagDefinitionsAsync(
-        UserNotificationRequestedIntegrationEventV2 integrationEvent,
+        UserNotificationProjectionRequest integrationEvent,
         DateTimeOffset nowUtc,
         CancellationToken cancellationToken)
     {
@@ -185,7 +227,7 @@ internal sealed class UserNotificationRequestedIntegrationEventV2Handler(
     }
 
     private async Task<NotificationDelivery> PlanDeliveryAsync(
-        UserNotificationRequestedIntegrationEventV2 integrationEvent,
+        UserNotificationProjectionRequest integrationEvent,
         string deliveryTag,
         string? suppressionCode,
         DateTimeOffset nowUtc,
@@ -249,7 +291,7 @@ internal sealed class UserNotificationRequestedIntegrationEventV2Handler(
     }
 
     private NotificationDelivery Unroutable(
-        UserNotificationRequestedIntegrationEventV2 integrationEvent,
+        UserNotificationProjectionRequest integrationEvent,
         string deliveryTag,
         string code,
         DateTimeOffset nowUtc) =>
@@ -321,6 +363,19 @@ internal sealed class UserNotificationRequestedIntegrationEventV2Handler(
         _ => throw new ArgumentOutOfRangeException(nameof(policy), policy, "Notification delivery policy is invalid.")
     };
 
+    private static NotificationHistoryReferenceKey ToDomainReference(
+        NotificationHistoryReference reference)
+    {
+        Framework.Results.Result<NotificationHistoryReferenceKey> result =
+            NotificationHistoryReferenceKey.Create(
+                reference.Namespace,
+                reference.Digest);
+        return result.IsSuccess
+            ? result.Value
+            : throw new InvalidOperationException(
+                "A validated notification history reference could not be mapped to the domain.");
+    }
+
     private static DomainTagKind ToDomainTagKind(ContractTagKind kind) => kind switch
     {
         ContractTagKind.Delivery => DomainTagKind.Delivery,
@@ -333,4 +388,57 @@ internal sealed class UserNotificationRequestedIntegrationEventV2Handler(
         string Description,
         DomainTagOrigin Origin,
         string Owner);
+
+    private sealed record UserNotificationProjectionRequest(
+        Guid EventId,
+        string ScopeId,
+        DateTimeOffset OccurredAtUtc,
+        string UserId,
+        string SourceModule,
+        string NotificationName,
+        int NotificationVersion,
+        string Title,
+        string? Body,
+        ContractNotificationSeverity Severity,
+        string PayloadJson,
+        IReadOnlyList<NotificationTag> Tags,
+        IReadOnlyList<NotificationHistoryReference> References,
+        ContractDeliveryPolicy DeliveryPolicy)
+    {
+        public static UserNotificationProjectionRequest From(
+            UserNotificationRequestedIntegrationEventV2 integrationEvent) =>
+            new(
+                integrationEvent.EventId,
+                integrationEvent.ScopeId,
+                integrationEvent.OccurredAtUtc,
+                integrationEvent.UserId,
+                integrationEvent.SourceModule,
+                integrationEvent.NotificationName,
+                integrationEvent.NotificationVersion,
+                integrationEvent.Title,
+                integrationEvent.Body,
+                integrationEvent.Severity,
+                integrationEvent.PayloadJson,
+                integrationEvent.Tags,
+                [],
+                integrationEvent.DeliveryPolicy);
+
+        public static UserNotificationProjectionRequest From(
+            UserNotificationRequestedIntegrationEventV3 integrationEvent) =>
+            new(
+                integrationEvent.EventId,
+                integrationEvent.ScopeId,
+                integrationEvent.OccurredAtUtc,
+                integrationEvent.UserId,
+                integrationEvent.SourceModule,
+                integrationEvent.NotificationName,
+                integrationEvent.NotificationVersion,
+                integrationEvent.Title,
+                integrationEvent.Body,
+                integrationEvent.Severity,
+                integrationEvent.PayloadJson,
+                integrationEvent.Tags,
+                integrationEvent.References,
+                integrationEvent.DeliveryPolicy);
+    }
 }

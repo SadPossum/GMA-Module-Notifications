@@ -14,6 +14,7 @@ using DomainTagOrigin = Domain.ValueObjects.NotificationTagOrigin;
 [IntegrationEventHandler("user-notification-request", RequiresExplicitProducerBinding = true)]
 internal sealed class UserNotificationRequestedIntegrationEventHandler(
     INotificationHistoryRepository repository,
+    INotificationHistoryLifecycleRepository lifecycleRepository,
     INotificationRoutingRepository routingRepository,
     INotificationPreferenceEvaluator preferenceEvaluator,
     ISystemClock clock,
@@ -63,6 +64,15 @@ internal sealed class UserNotificationRequestedIntegrationEventHandler(
         {
             throw new InvalidOperationException(
                 $"Notification request {integrationEvent.EventId} could not be projected: {notification.Error.Code}.");
+        }
+
+        if (!await lifecycleRepository
+                .RegisterAsync(
+                    notification.Value,
+                    cancellationToken)
+                .ConfigureAwait(false))
+        {
+            return;
         }
 
         NotificationTagDefinition? webDefinition = await routingRepository

@@ -1,9 +1,12 @@
 namespace Gma.Modules.Notifications.Persistence;
 
+using System.Data;
 using Gma.Framework.Notifications;
 using Gma.Modules.Notifications.Application.Ports;
 using Gma.Modules.Notifications.Contracts;
 using Microsoft.Extensions.Logging;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using ContractDeliveryPolicy = Contracts.NotificationDeliveryPolicy;
 using ContractNotificationSeverity = Contracts.NotificationSeverity;
 using ContractTagKind = Contracts.NotificationTagKind;
@@ -22,6 +25,9 @@ internal sealed class NotificationHistoryWriter(
 
         try
         {
+            await using IDbContextTransaction? transaction =
+                await this.BeginTransactionAsync(cancellationToken)
+                    .ConfigureAwait(false);
             await projector.ProjectAsync(
                     new UserNotificationRequestedIntegrationEventV2(
                         message.Id,
@@ -40,6 +46,11 @@ internal sealed class NotificationHistoryWriter(
                     cancellationToken)
                 .ConfigureAwait(false);
             await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync(cancellationToken)
+                    .ConfigureAwait(false);
+            }
         }
         catch (ArgumentException exception)
         {
@@ -47,6 +58,22 @@ internal sealed class NotificationHistoryWriter(
                 "A user notification could not be converted to a durable request because {ExceptionType} was raised.",
                 exception.GetType().Name);
         }
+    }
+
+    private async Task<IDbContextTransaction?> BeginTransactionAsync(
+        CancellationToken cancellationToken)
+    {
+        if (!dbContext.Database.IsRelational() ||
+            dbContext.Database.CurrentTransaction is not null)
+        {
+            return null;
+        }
+
+        return await dbContext.Database
+            .BeginTransactionAsync(
+                IsolationLevel.Serializable,
+                cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private static ContractNotificationSeverity ToContractSeverity(FrameworkNotificationSeverity severity) =>

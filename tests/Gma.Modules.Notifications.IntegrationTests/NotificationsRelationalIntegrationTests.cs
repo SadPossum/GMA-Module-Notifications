@@ -1,11 +1,13 @@
 namespace Gma.Modules.Notifications.IntegrationTests;
 
+using System.Data;
 using Gma.Framework.Notifications;
 using Gma.Framework.Runtime;
 using Gma.Framework.Runtime.Identity;
 using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
 using Gma.Modules.Notifications.Application;
+using Gma.Modules.Notifications.Application.Handlers;
 using Gma.Modules.Notifications.Application.Ports;
 using Gma.Modules.Notifications.Domain.Aggregates;
 using Gma.Modules.Notifications.Domain.Entities;
@@ -13,13 +15,19 @@ using Gma.Modules.Notifications.IntegrationTests.Support;
 using Gma.Modules.Notifications.Persistence;
 using Gma.Modules.Notifications.Persistence.Repositories;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Npgsql;
 using Testcontainers.MsSql;
 using Testcontainers.PostgreSql;
 using Xunit;
 using ContractRecipientKind = Gma.Modules.Notifications.Contracts.NotificationBroadcastRecipientKind;
+using ContractHistoryReference = Gma.Modules.Notifications.Contracts.NotificationHistoryReference;
+using ContractSeverity = Gma.Modules.Notifications.Contracts.NotificationSeverity;
+using DomainHistoryReferenceKey = Gma.Modules.Notifications.Domain.ValueObjects.NotificationHistoryReferenceKey;
 using DomainAudience = Gma.Modules.Notifications.Domain.ValueObjects.NotificationBroadcastAudience;
 using DomainAttemptOutcome = Gma.Modules.Notifications.Domain.ValueObjects.NotificationDeliveryAttemptOutcome;
 using DomainDeliveryStatus = Gma.Modules.Notifications.Domain.ValueObjects.NotificationDeliveryStatus;
@@ -36,7 +44,7 @@ public sealed class NotificationsRelationalIntegrationTests
     {
         await using PostgreSqlContainer postgreSql = await StartPostgreSqlAsync("notifications_stream_tests");
         await using ServiceProvider provider = CreateProvider(postgreSql.GetConnectionString());
-        await MigrateAsync(provider);
+        await MigrateWithLegacyRecipientBackfillAsync(provider);
 
         await using (AsyncServiceScope scope = provider.CreateAsyncScope())
         {
@@ -132,7 +140,7 @@ public sealed class NotificationsRelationalIntegrationTests
         await using MsSqlContainer sqlServer = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-latest").Build();
         await sqlServer.StartAsync();
         await using ServiceProvider provider = CreateSqlServerProvider(sqlServer.GetConnectionString());
-        await MigrateAsync(provider);
+        await MigrateWithLegacyRecipientBackfillAsync(provider);
         await SeedDeliveriesAsync(provider, count: 4);
 
         TrackingDeliverySink sink = new();
@@ -188,6 +196,396 @@ public sealed class NotificationsRelationalIntegrationTests
             .CountAsync());
     }
 
+    [DockerFact]
+    public async Task Notification_history_lifecycle_closes_exact_reference_and_suppresses_replay()
+    {
+        await using PostgreSqlContainer postgreSql =
+            await StartPostgreSqlAsync("notifications_history_lifecycle_tests");
+        await using ServiceProvider provider =
+            CreateProvider(postgreSql.GetConnectionString());
+        await MigrateAsync(provider);
+
+        ContractHistoryReference reference =
+            ContractHistoryReference.FromCanonicalCoordinate(
+                "reservation-history-test",
+                "notifications-history-test/v1|tenant-a|reservation|00000000000000000000000000000001");
+        NotificationHistoryReferenceSnapshot prepared;
+        await using (AsyncServiceScope prepareScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationHistoryLifecycleService lifecycle =
+                CreateHistoryLifecycle(prepareScope, Now);
+            prepared = await lifecycle.EnsureOpenAsync(
+                "tenant-a",
+                reference,
+                CancellationToken.None);
+        }
+
+        Assert.Equal(NotificationHistoryReferenceStatus.Open, prepared.Status);
+        Assert.Equal(1, prepared.Version);
+        Assert.Equal(0, prepared.RecordCount);
+
+        UserNotification notification = CreateNotification(
+            "history-user",
+            "reservation-changed",
+            Now,
+            reference);
+        NotificationDelivery delivery = NotificationDelivery.CreatePending(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            notification.Id,
+            NotificationTags.Email,
+            TrackingDeliverySink.Provider,
+            Now).Value;
+        Assert.True(
+            delivery
+                .Claim(
+                    "history-worker",
+                    Now,
+                    TimeSpan.FromMinutes(5))
+                .IsSuccess);
+
+        await using (AsyncServiceScope seedScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext =
+                seedScope.ServiceProvider
+                    .GetRequiredService<NotificationsDbContext>();
+            NotificationHistoryLifecycleRepository repository = new(
+                dbContext);
+            Assert.True(
+                await repository.RegisterAsync(
+                    notification,
+                    CancellationToken.None));
+            dbContext.UserNotifications.Add(notification);
+            dbContext.NotificationDeliveries.Add(delivery);
+            await dbContext.SaveChangesAsync();
+        }
+
+        NotificationHistoryReferenceSnapshot projected;
+        await using (AsyncServiceScope readScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationHistoryLifecycleService lifecycle =
+                CreateHistoryLifecycle(readScope, Now);
+            projected = await lifecycle.GetSnapshotAsync(
+                "tenant-a",
+                reference,
+                CancellationToken.None);
+            NotificationHistoryReferencePage page =
+                await lifecycle.ListAsync(
+                    "tenant-a",
+                    reference,
+                    afterStreamSequence: 0,
+                    pageSize: 10,
+                    CancellationToken.None);
+
+            Assert.Equal(
+                NotificationHistoryReferenceStatus.Open,
+                projected.Status);
+            Assert.Equal(2, projected.Version);
+            Assert.Equal(1, projected.RecordCount);
+            Assert.True(projected.LatestStreamSequence > 0);
+            Assert.Equal(projected.Version, page.ReferenceVersion);
+            NotificationHistoryReferenceRecord record =
+                Assert.Single(page.Records);
+            Assert.Equal(notification.Id, record.NotificationId);
+            Assert.Equal("history-user", record.RecipientId);
+            Assert.False(page.HasMore);
+        }
+
+        Guid operationId = Guid.CreateVersion7();
+        NotificationHistoryReferenceCloseRequest closeRequest = new(
+            operationId,
+            "tenant-a",
+            reference,
+            projected.Version,
+            MaximumRecords: 10);
+        await using (AsyncServiceScope busyScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationHistoryReferenceCloseResult busy =
+                await CreateHistoryLifecycle(busyScope, Now)
+                    .CloseAsync(closeRequest, CancellationToken.None);
+            Assert.Equal(
+                NotificationHistoryReferenceCloseStatus.Busy,
+                busy.Status);
+            Assert.Null(busy.Receipt);
+        }
+
+        await using (AsyncServiceScope releaseScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext =
+                releaseScope.ServiceProvider
+                    .GetRequiredService<NotificationsDbContext>();
+            NotificationDelivery claimed = await dbContext
+                .NotificationDeliveries
+                .SingleAsync(candidate => candidate.Id == delivery.Id);
+            Assert.True(
+                claimed
+                    .MarkRetry(
+                        "history-worker",
+                        Now.AddSeconds(1),
+                        "retry-before-close",
+                        Now.AddMinutes(1))
+                    .IsSuccess);
+            await dbContext.SaveChangesAsync();
+        }
+
+        NotificationHistoryReferenceCloseReceipt completedReceipt;
+        await using (AsyncServiceScope closeScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationHistoryReferenceCloseResult completed =
+                await CreateHistoryLifecycle(
+                        closeScope,
+                        Now.AddSeconds(2))
+                    .CloseAsync(closeRequest, CancellationToken.None);
+            Assert.Equal(
+                NotificationHistoryReferenceCloseStatus.Completed,
+                completed.Status);
+            completedReceipt = Assert.IsType<
+                NotificationHistoryReferenceCloseReceipt>(
+                completed.Receipt);
+            Assert.Equal(3, completedReceipt.ResultingVersion);
+            Assert.Equal(1, completedReceipt.RemovedRecordCount);
+            Assert.Equal(64, completedReceipt.RemovedRecordIdsSha256.Length);
+        }
+
+        await using (AsyncServiceScope assertionScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext =
+                assertionScope.ServiceProvider
+                    .GetRequiredService<NotificationsDbContext>();
+            Assert.Equal(0, await dbContext.UserNotifications.CountAsync());
+            Assert.Equal(
+                0,
+                await dbContext.NotificationDeliveries.CountAsync());
+            Assert.Equal(
+                0,
+                await dbContext.UserNotificationReferences.CountAsync());
+            Assert.Equal(
+                1,
+                await dbContext.NotificationHistoryCloseReceipts
+                    .CountAsync());
+
+            ContractHistoryReference recipientReference =
+                ContractHistoryReference.ForRecipient(
+                    "tenant-a",
+                    "history-user");
+            NotificationHistoryReferenceState recipientState =
+                await dbContext.NotificationHistoryReferenceStates
+                    .SingleAsync(state =>
+                        state.ScopeId == "tenant-a" &&
+                        state.Namespace ==
+                        recipientReference.Namespace &&
+                        state.Digest == recipientReference.Digest);
+            Assert.False(recipientState.IsClosed);
+            Assert.Equal(2, recipientState.Version);
+        }
+
+        await using (AsyncServiceScope replayScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationHistoryLifecycleService lifecycle =
+                CreateHistoryLifecycle(
+                    replayScope,
+                    Now.AddSeconds(3));
+            NotificationHistoryReferenceCloseResult replayed =
+                await lifecycle.CloseAsync(
+                    closeRequest,
+                    CancellationToken.None);
+            Assert.Equal(
+                NotificationHistoryReferenceCloseStatus.Replayed,
+                replayed.Status);
+            Assert.Equal(completedReceipt, replayed.Receipt);
+
+            NotificationHistoryReferenceCloseResult conflictingReplay =
+                await lifecycle.CloseAsync(
+                    closeRequest with { MaximumRecords = 11 },
+                    CancellationToken.None);
+            Assert.Equal(
+                NotificationHistoryReferenceCloseStatus.Conflict,
+                conflictingReplay.Status);
+        }
+
+        UserNotification late = CreateNotification(
+            "history-user",
+            "late-reservation-change",
+            Now.AddMinutes(1),
+            reference);
+        await using (AsyncServiceScope lateScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext =
+                lateScope.ServiceProvider
+                    .GetRequiredService<NotificationsDbContext>();
+            NotificationHistoryLifecycleRepository repository = new(
+                dbContext);
+            Assert.False(
+                await repository.RegisterAsync(
+                    late,
+                    CancellationToken.None));
+
+            NotificationHistoryReferenceSnapshot closed =
+                await CreateHistoryLifecycle(
+                        lateScope,
+                        Now.AddMinutes(1))
+                    .GetSnapshotAsync(
+                        "tenant-a",
+                        reference,
+                        CancellationToken.None);
+            Assert.Equal(
+                NotificationHistoryReferenceStatus.Closed,
+                closed.Status);
+            Assert.Equal(
+                completedReceipt.ResultingVersion,
+                closed.Version);
+            Assert.Equal(0, closed.RecordCount);
+        }
+
+        ContractHistoryReference racingReference =
+            ContractHistoryReference.FromCanonicalCoordinate(
+                "reservation-history-test",
+                "notifications-history-test/v1|tenant-a|reservation|00000000000000000000000000000002");
+        NotificationHistoryReferenceSnapshot racingPrepared;
+        await using (AsyncServiceScope prepareRaceScope =
+                     provider.CreateAsyncScope())
+        {
+            racingPrepared =
+                await CreateHistoryLifecycle(
+                        prepareRaceScope,
+                        Now.AddMinutes(2))
+                    .EnsureOpenAsync(
+                        "tenant-a",
+                        racingReference,
+                        CancellationToken.None);
+        }
+
+        await using (AsyncServiceScope projectionScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationsDbContext projectionDb =
+                projectionScope.ServiceProvider
+                    .GetRequiredService<NotificationsDbContext>();
+            await using var projectionTransaction =
+                await projectionDb.Database.BeginTransactionAsync(
+                    IsolationLevel.Serializable);
+            UserNotification racingNotification = CreateNotification(
+                "history-user",
+                "racing-reservation-change",
+                Now.AddMinutes(2),
+                racingReference);
+            NotificationHistoryLifecycleRepository repository = new(
+                projectionDb);
+            Assert.True(
+                await repository.RegisterAsync(
+                    racingNotification,
+                    CancellationToken.None));
+            projectionDb.UserNotifications.Add(racingNotification);
+
+            await using (AsyncServiceScope closeRaceScope =
+                         provider.CreateAsyncScope())
+            {
+                NotificationHistoryReferenceCloseResult closeWon =
+                    await CreateHistoryLifecycle(
+                            closeRaceScope,
+                            Now.AddMinutes(2).AddSeconds(1))
+                        .CloseAsync(
+                            new NotificationHistoryReferenceCloseRequest(
+                                Guid.CreateVersion7(),
+                                "tenant-a",
+                                racingReference,
+                                racingPrepared.Version,
+                                MaximumRecords: 10),
+                            CancellationToken.None);
+                Assert.Equal(
+                    NotificationHistoryReferenceCloseStatus.Completed,
+                    closeWon.Status);
+                Assert.Equal(
+                    0,
+                    closeWon.Receipt!.RemovedRecordCount);
+            }
+
+            Exception projectionFailure =
+                await Assert.ThrowsAnyAsync<Exception>(
+                    () => projectionDb.SaveChangesAsync());
+            Assert.True(
+                IsSafeProjectionConcurrencyAbort(projectionFailure),
+                $"Unexpected projection race failure: {projectionFailure.GetType().FullName}");
+            await projectionTransaction.RollbackAsync();
+        }
+
+        await using (AsyncServiceScope raceAssertionScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationHistoryReferenceSnapshot raceClosed =
+                await CreateHistoryLifecycle(
+                        raceAssertionScope,
+                        Now.AddMinutes(3))
+                    .GetSnapshotAsync(
+                        "tenant-a",
+                        racingReference,
+                        CancellationToken.None);
+            Assert.Equal(
+                NotificationHistoryReferenceStatus.Closed,
+                raceClosed.Status);
+            Assert.Equal(0, raceClosed.RecordCount);
+            Assert.False(
+                await raceAssertionScope.ServiceProvider
+                    .GetRequiredService<NotificationsDbContext>()
+                    .UserNotifications
+                    .AnyAsync(notification =>
+                        notification.Source.Name ==
+                        "racing-reservation-change"));
+        }
+
+        Guid legacyNotificationId = Guid.CreateVersion7();
+        await using (AsyncServiceScope legacyScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext =
+                legacyScope.ServiceProvider
+                    .GetRequiredService<NotificationsDbContext>();
+            UserNotificationRequestedIntegrationEventHandler handler = new(
+                new NotificationHistoryRepository(dbContext),
+                new NotificationHistoryLifecycleRepository(dbContext),
+                new NotificationRoutingRepository(dbContext),
+                new AllowAllNotificationPreferenceEvaluator(),
+                new FixedClock(Now.AddMinutes(4)),
+                new TestIdGenerator());
+            await handler.HandleAsync(
+                new Gma.Modules.Notifications.Contracts
+                    .UserNotificationRequestedIntegrationEvent(
+                        legacyNotificationId,
+                        "tenant-a",
+                        Now.AddMinutes(4),
+                        "legacy-history-user",
+                        "legacy-producer",
+                        "legacy-notification",
+                        1,
+                        "Legacy notification",
+                        "Legacy notification body",
+                        ContractSeverity.Info,
+                        "{}"),
+                CancellationToken.None);
+            await dbContext.SaveChangesAsync();
+
+            Assert.True(
+                await dbContext.UserNotifications.AnyAsync(
+                    notification =>
+                        notification.Id == legacyNotificationId));
+            Assert.Equal(
+                1,
+                await dbContext.UserNotificationReferences.CountAsync(
+                    assignment =>
+                        assignment.NotificationId ==
+                        legacyNotificationId));
+        }
+    }
+
     private static async Task<PostgreSqlContainer> StartPostgreSqlAsync(string database)
     {
         PostgreSqlContainer container = new PostgreSqlBuilder("postgres:16-alpine")
@@ -227,6 +625,124 @@ public sealed class NotificationsRelationalIntegrationTests
             .Database
             .MigrateAsync();
     }
+
+    private static async Task MigrateWithLegacyRecipientBackfillAsync(
+        ServiceProvider provider)
+    {
+        const string legacyScope = "tenant-backfill";
+        const string emptyPayload = "{}";
+        string[] legacyRecipients =
+        [
+            "CaseSensitiveUser",
+            "casesensitiveuser"
+        ];
+
+        await using AsyncServiceScope scope = provider.CreateAsyncScope();
+        NotificationsDbContext dbContext = scope.ServiceProvider
+            .GetRequiredService<NotificationsDbContext>();
+        string[] migrations = dbContext.Database.GetMigrations().ToArray();
+        Assert.EndsWith(
+            "AddNotificationHistoryLifecycle",
+            migrations[^1],
+            StringComparison.Ordinal);
+        IMigrator migrator = dbContext.GetService<IMigrator>();
+        await migrator.MigrateAsync(migrations[^2]);
+
+        foreach (string recipient in legacyRecipients)
+        {
+            Guid id = Guid.CreateVersion7();
+            if (dbContext.Database.ProviderName?.Contains(
+                    "Npgsql",
+                    StringComparison.Ordinal) == true)
+            {
+                await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                    $"""
+                     INSERT INTO notifications.user_notifications
+                         ("Id", "ScopeId", "UserId", "Module", "Name",
+                          "Version", "Title", "Body", "Severity",
+                          "OccurredAtUtc", "CreatedAtUtc", "ReadAtUtc",
+                          "PayloadJson", "DeliveryPolicy", "IsInboxVisible")
+                     VALUES
+                         ({id}, {legacyScope}, {recipient},
+                          'legacy-producer', 'legacy-notification', 1,
+                          'Legacy notification', NULL, 'info',
+                          {Now}, {Now}, NULL, {emptyPayload},
+                          'respect-preferences', TRUE);
+                     """);
+            }
+            else
+            {
+                await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                    $"""
+                     INSERT INTO [notifications].[user_notifications]
+                         ([Id], [ScopeId], [UserId], [Module], [Name],
+                          [Version], [Title], [Body], [Severity],
+                          [OccurredAtUtc], [CreatedAtUtc], [ReadAtUtc],
+                          [PayloadJson], [DeliveryPolicy], [IsInboxVisible])
+                     VALUES
+                         ({id}, {legacyScope}, {recipient},
+                          N'legacy-producer', N'legacy-notification', 1,
+                          N'Legacy notification', NULL, N'info',
+                          {Now}, {Now}, NULL, {emptyPayload},
+                          N'respect-preferences', CAST(1 AS bit));
+                     """);
+            }
+        }
+
+        await migrator.MigrateAsync();
+
+        UserNotificationReference[] assignments = await dbContext
+            .UserNotificationReferences
+            .IgnoreQueryFilters()
+            .Where(reference => reference.ScopeId == legacyScope)
+            .OrderBy(reference => reference.Digest)
+            .ToArrayAsync();
+        Assert.Equal(legacyRecipients.Length, assignments.Length);
+        Assert.Equal(
+            legacyRecipients
+                .Select(recipient =>
+                    ContractHistoryReference.ForRecipient(
+                        legacyScope,
+                        recipient).Digest)
+                .Order(StringComparer.Ordinal),
+            assignments
+                .Select(reference => reference.Digest)
+                .Order(StringComparer.Ordinal));
+
+        NotificationHistoryReferenceState[] states = await dbContext
+            .NotificationHistoryReferenceStates
+            .IgnoreQueryFilters()
+            .Where(state =>
+                state.ScopeId == legacyScope &&
+                state.Namespace ==
+                ContractHistoryReference.RecipientNamespace)
+            .ToArrayAsync();
+        Assert.Equal(legacyRecipients.Length, states.Length);
+        Assert.All(states, state =>
+        {
+            Assert.Equal(1, state.Version);
+            Assert.False(state.IsClosed);
+        });
+    }
+
+    private static bool IsSafeProjectionConcurrencyAbort(
+        Exception exception) =>
+        exception is DbUpdateConcurrencyException ||
+        exception is PostgresException
+        {
+            SqlState: PostgresErrorCodes.SerializationFailure
+        } ||
+        (exception.InnerException is not null &&
+         IsSafeProjectionConcurrencyAbort(exception.InnerException));
+
+    private static NotificationHistoryLifecycleService CreateHistoryLifecycle(
+        AsyncServiceScope scope,
+        DateTimeOffset nowUtc) =>
+        new(
+            scope.ServiceProvider
+                .GetRequiredService<NotificationsDbContext>(),
+            scope.ServiceProvider.GetRequiredService<IScopeContext>(),
+            new FixedClock(nowUtc));
 
     private static async Task SeedDeliveriesAsync(ServiceProvider provider, int count)
     {
@@ -363,6 +879,34 @@ public sealed class NotificationsRelationalIntegrationTests
             createdAtUtc,
             createdAtUtc,
             "{}").Value;
+
+    private static UserNotification CreateNotification(
+        string userId,
+        string name,
+        DateTimeOffset createdAtUtc,
+        ContractHistoryReference reference) =>
+        UserNotification.Create(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            userId,
+            "notifications-tests",
+            name,
+            1,
+            name,
+            null,
+            DomainSeverity.Info,
+            createdAtUtc,
+            createdAtUtc,
+            "{}",
+            ["delivery:web", NotificationTags.Email],
+            Gma.Modules.Notifications.Domain.ValueObjects.NotificationDeliveryPolicy
+                .RespectPreferences,
+            isInboxVisible: true,
+            [
+                DomainHistoryReferenceKey.Create(
+                    reference.Namespace,
+                    reference.Digest).Value
+            ]).Value;
 
     private static NotificationBroadcast CreateBroadcast(string name) =>
         NotificationBroadcast.Create(

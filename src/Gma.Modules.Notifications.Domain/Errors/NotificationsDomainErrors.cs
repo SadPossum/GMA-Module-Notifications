@@ -33,4 +33,8 @@ public static class NotificationsDomainErrors
     public static readonly Error DeliveryResultInvalid = new("Notifications.DeliveryResultInvalid", "Notification delivery result is invalid.");
     public static readonly Error DeliveryCannotBeRetried = new("Notifications.DeliveryCannotBeRetried", "Notification delivery cannot be retried from its current state.");
     public static readonly Error DeliveryAttemptInvalid = new("Notifications.DeliveryAttemptInvalid", "Notification delivery attempt is invalid.");
+    public static readonly Error HistoryReferenceInvalid = new("Notifications.HistoryReferenceInvalid", "Notification history reference is invalid.");
+    public static readonly Error HistoryReferenceCountInvalid = new("Notifications.HistoryReferenceCountInvalid", "Notification history reference count is invalid.");
+    public static readonly Error HistoryReferenceClosed = new("Notifications.HistoryReferenceClosed", "Notification history reference is closed.");
+    public static readonly Error HistoryCloseReceiptInvalid = new("Notifications.HistoryCloseReceiptInvalid", "Notification history close receipt is invalid.");
 }

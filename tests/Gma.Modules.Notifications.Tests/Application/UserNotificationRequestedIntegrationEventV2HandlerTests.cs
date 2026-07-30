@@ -9,6 +9,7 @@ using Gma.Modules.Notifications.Application.Handlers;
 using Gma.Modules.Notifications.Application.Ports;
 using Gma.Modules.Notifications.Contracts;
 using Gma.Modules.Notifications.Domain.Aggregates;
+using Gma.Modules.Notifications.Domain.Entities;
 using Gma.Modules.Notifications.Domain.ValueObjects;
 using Gma.Modules.Notifications.Persistence;
 using Gma.Modules.Notifications.Persistence.Repositories;
@@ -90,6 +91,80 @@ public sealed class UserNotificationRequestedIntegrationEventV2HandlerTests
             delivery => delivery.Status == DomainDeliveryStatus.Pending);
     }
 
+    [Fact]
+    public async Task V3_handler_persists_recipient_and_producer_references()
+    {
+        await using NotificationsDbContext dbContext = CreateDbContext();
+        UserNotificationRequestedIntegrationEventV2Handler handler =
+            CreateHandler(dbContext);
+        NotificationHistoryReference producerReference =
+            NotificationHistoryReference.FromCanonicalCoordinate(
+                "product-subject",
+                "product-subject/v1|tenant-a|record-42");
+
+        await handler.HandleAsync(
+            EventV3(Guid.CreateVersion7(), [producerReference]),
+            CancellationToken.None);
+        await dbContext.SaveChangesAsync();
+
+        UserNotification notification = Assert.Single(
+            await dbContext.UserNotifications
+                .Include(item => item.References)
+                .ToArrayAsync());
+        Assert.Equal(2, notification.References.Count);
+        Assert.Contains(
+            notification.References,
+            reference =>
+                reference.Namespace == producerReference.Namespace &&
+                reference.Digest == producerReference.Digest);
+        Assert.Equal(
+            2,
+            await dbContext.NotificationHistoryReferenceStates
+                .CountAsync());
+        Assert.All(
+            await dbContext.NotificationHistoryReferenceStates
+                .ToArrayAsync(),
+            state => Assert.Equal(1, state.Version));
+    }
+
+    [Fact]
+    public async Task V3_handler_does_not_plan_or_store_a_closed_reference()
+    {
+        await using NotificationsDbContext dbContext = CreateDbContext();
+        NotificationHistoryReference closedReference =
+            NotificationHistoryReference.FromCanonicalCoordinate(
+                "closed-resource",
+                "closed-resource/v1|tenant-a|record-42");
+        NotificationHistoryReferenceKey key =
+            NotificationHistoryReferenceKey.Create(
+                closedReference.Namespace,
+                closedReference.Digest).Value;
+        NotificationHistoryReferenceState state =
+            NotificationHistoryReferenceState
+                .Create("tenant-a", key).Value;
+        state.Close(
+            Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            new string('a', 64),
+            Now);
+        dbContext.NotificationHistoryReferenceStates.Add(state);
+        await dbContext.SaveChangesAsync();
+        UserNotificationRequestedIntegrationEventV2Handler handler =
+            CreateHandler(dbContext);
+
+        await handler.HandleAsync(
+            EventV3(Guid.CreateVersion7(), [closedReference]),
+            CancellationToken.None);
+        await dbContext.SaveChangesAsync();
+
+        Assert.Empty(await dbContext.UserNotifications.ToArrayAsync());
+        Assert.Empty(await dbContext.NotificationDeliveries.ToArrayAsync());
+        Assert.Empty(
+            await dbContext.NotificationTagDefinitions.ToArrayAsync());
+        Assert.Single(
+            await dbContext.NotificationHistoryReferenceStates
+                .ToArrayAsync());
+    }
+
     private static UserNotificationRequestedIntegrationEventV2Handler CreateHandler(NotificationsDbContext dbContext)
     {
         NotificationRoutingRepository routing = new(dbContext);
@@ -97,6 +172,7 @@ public sealed class UserNotificationRequestedIntegrationEventV2HandlerTests
         NotificationDeliveryAdapterCatalog catalog = new([new DurableEmailSink()]);
         return new UserNotificationRequestedIntegrationEventV2Handler(
             history,
+            new NotificationHistoryLifecycleRepository(dbContext),
             routing,
             catalog,
             new AllowAllNotificationPreferenceEvaluator(),
@@ -134,6 +210,34 @@ public sealed class UserNotificationRequestedIntegrationEventV2HandlerTests
                 new NotificationTag("domain:security", ContractTagKind.Domain)
             ],
             policy);
+
+    private static UserNotificationRequestedIntegrationEventV3 EventV3(
+        Guid id,
+        IReadOnlyList<NotificationHistoryReference> references) =>
+        new(
+            id,
+            "tenant-a",
+            Now,
+            "user-a",
+            "auth",
+            "account.signed-in",
+            1,
+            "Account signed in",
+            "A new session was created.",
+            ContractSeverity.Warning,
+            "{}",
+            [
+                new NotificationTag(
+                    NotificationTags.Web,
+                    ContractTagKind.Delivery),
+                new NotificationTag(
+                    NotificationTags.Email,
+                    ContractTagKind.Delivery),
+                new NotificationTag(
+                    "domain:security",
+                    ContractTagKind.Domain)
+            ],
+            references);
 
     private sealed class DurableEmailSink : IUserNotificationSink
     {

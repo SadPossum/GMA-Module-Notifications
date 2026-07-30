@@ -75,6 +75,12 @@ internal sealed class UserNotificationConfiguration : IEntityTypeConfiguration<U
             .OnDelete(DeleteBehavior.Cascade);
         builder.Navigation(notification => notification.Tags)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
+        builder.HasMany(notification => notification.References)
+            .WithOne()
+            .HasForeignKey(reference => reference.NotificationId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Navigation(notification => notification.References)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
         builder.HasIndex(notification => new { notification.ScopeId, notification.Recipient, notification.OccurredAtUtc });
         builder.HasIndex(notification => new { notification.ScopeId, notification.Recipient, notification.ReadAtUtc });
         builder.HasIndex(notification => new { notification.ScopeId, notification.Recipient, notification.StreamSequence });

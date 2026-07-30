@@ -1,5 +1,6 @@
 namespace Gma.Modules.Notifications.Persistence;
 
+using System.Data;
 using Gma.Framework.Runtime.Maintenance;
 using Gma.Framework.Runtime.Time;
 using Gma.Modules.Notifications.Application;
@@ -7,6 +8,7 @@ using Gma.Modules.Notifications.Domain.Aggregates;
 using Gma.Modules.Notifications.Domain.Entities;
 using Gma.Modules.Notifications.Domain.ValueObjects;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -129,13 +131,21 @@ internal sealed class NotificationRetentionService(
             .ConfigureAwait(false);
     }
 
-    private static async Task<int> DeleteExpiredNotificationsBatchAsync(
+    internal static async Task<int> DeleteExpiredNotificationsBatchAsync(
         NotificationsDbContext dbContext,
         DateTimeOffset readBefore,
         DateTimeOffset unreadBefore,
         int batchSize,
         CancellationToken cancellationToken)
     {
+        await using IDbContextTransaction? transaction =
+            dbContext.Database.IsRelational() &&
+            dbContext.Database.CurrentTransaction is null
+                ? await dbContext.Database.BeginTransactionAsync(
+                        IsolationLevel.Serializable,
+                        cancellationToken)
+                    .ConfigureAwait(false)
+                : null;
         Guid[] notificationIds = await ExpiredUserNotifications(dbContext, readBefore, unreadBefore)
             .OrderBy(notification => notification.CreatedAtUtc)
             .Select(notification => notification.Id)
@@ -147,11 +157,88 @@ internal sealed class NotificationRetentionService(
             return 0;
         }
 
-        return await dbContext.UserNotifications
-            .IgnoreQueryFilters()
-            .Where(notification => notificationIds.Contains(notification.Id))
-            .ExecuteDeleteAsync(cancellationToken)
-            .ConfigureAwait(false);
+        int removed;
+        if (dbContext.Database.IsRelational())
+        {
+            await dbContext.NotificationHistoryReferenceStates
+                .IgnoreQueryFilters()
+                .Where(state =>
+                    !state.IsClosed &&
+                    dbContext.UserNotificationReferences
+                        .IgnoreQueryFilters()
+                        .Any(assignment =>
+                            notificationIds.Contains(
+                                assignment.NotificationId) &&
+                            assignment.ScopeId == state.ScopeId &&
+                            assignment.Namespace == state.Namespace &&
+                            assignment.Digest == state.Digest))
+                .ExecuteUpdateAsync(
+                    setters => setters.SetProperty(
+                        state => state.Version,
+                        state => state.Version + 1),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            removed = await dbContext.UserNotifications
+                .IgnoreQueryFilters()
+                .Where(notification =>
+                    notificationIds.Contains(notification.Id))
+                .ExecuteDeleteAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            UserNotificationReference[] assignments = await dbContext
+                .UserNotificationReferences
+                .IgnoreQueryFilters()
+                .Where(assignment =>
+                    notificationIds.Contains(
+                        assignment.NotificationId))
+                .ToArrayAsync(cancellationToken)
+                .ConfigureAwait(false);
+            foreach (IGrouping<
+                         (string ScopeId, string Namespace, string Digest),
+                         UserNotificationReference> group in assignments
+                         .GroupBy(assignment => (
+                             assignment.ScopeId,
+                             assignment.Namespace,
+                             assignment.Digest)))
+            {
+                NotificationHistoryReferenceState? state = await dbContext
+                    .NotificationHistoryReferenceStates
+                    .IgnoreQueryFilters()
+                    .SingleOrDefaultAsync(
+                        candidate =>
+                            candidate.ScopeId == group.Key.ScopeId &&
+                            candidate.Namespace == group.Key.Namespace &&
+                            candidate.Digest == group.Key.Digest,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                if (state is { IsClosed: false })
+                {
+                    state.RecordRemoval();
+                }
+            }
+
+            UserNotification[] notifications = await dbContext
+                .UserNotifications
+                .IgnoreQueryFilters()
+                .Where(notification =>
+                    notificationIds.Contains(notification.Id))
+                .ToArrayAsync(cancellationToken)
+                .ConfigureAwait(false);
+            dbContext.UserNotifications.RemoveRange(notifications);
+            await dbContext.SaveChangesAsync(cancellationToken)
+                .ConfigureAwait(false);
+            removed = notifications.Length;
+        }
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return removed;
     }
 
     private static async Task<int> DeleteExpiredBroadcastsBatchAsync(

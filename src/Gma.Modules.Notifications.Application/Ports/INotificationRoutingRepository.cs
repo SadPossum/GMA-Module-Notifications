@@ -60,3 +60,10 @@ public interface IUserNotificationRequestProjector
         UserNotificationRequestedIntegrationEventV2 integrationEvent,
         CancellationToken cancellationToken);
 }
+
+public interface IUserNotificationRequestProjectorV3
+{
+    Task ProjectAsync(
+        UserNotificationRequestedIntegrationEventV3 integrationEvent,
+        CancellationToken cancellationToken);
+}

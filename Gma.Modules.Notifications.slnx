@@ -26,6 +26,7 @@
   </Folder>
   <Folder Name="/docs/">
     <File Path="docs/README.md" />
+    <File Path="docs/notification-history-lifecycle-task.md" />
     <File Path="docs/notifications-production-hardening-task.md" />
   </Folder>
   <Folder Name="/eng/">

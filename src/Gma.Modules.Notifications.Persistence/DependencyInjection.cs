@@ -50,6 +50,12 @@ public static class DependencyInjection
                 NotificationsMigrations.HistoryTable));
 
         builder.Services.TryAddScoped<INotificationHistoryRepository, NotificationHistoryRepository>();
+        builder.Services.TryAddScoped<
+            INotificationHistoryLifecycleRepository,
+            NotificationHistoryLifecycleRepository>();
+        builder.Services.TryAddScoped<
+            INotificationHistoryLifecycle,
+            NotificationHistoryLifecycleService>();
         builder.Services.TryAddScoped<INotificationBroadcastRepository, NotificationBroadcastRepository>();
         builder.Services.TryAddScoped<INotificationRoutingRepository, NotificationRoutingRepository>();
         builder.Services.TryAddSingleton<NotificationDeliveryMetrics>();

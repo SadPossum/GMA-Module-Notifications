@@ -71,6 +71,104 @@ public sealed class UserNotificationDomainTests
         Assert.Equal(readAt, notification.ReadAtUtc);
     }
 
+    [Fact]
+    public void Create_adds_recipient_and_validated_producer_references()
+    {
+        NotificationHistoryReferenceKey producer =
+            NotificationHistoryReferenceKey.Create(
+                "product-subject",
+                new string('a', 64)).Value;
+
+        Result<UserNotification> result = UserNotification.Create(
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            "tenant-a",
+            "user-a",
+            "catalog",
+            "catalog.item-updated",
+            1,
+            "Item updated",
+            null,
+            NotificationSeverity.Info,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            "{}",
+            ["delivery:web"],
+            NotificationDeliveryPolicy.RespectPreferences,
+            isInboxVisible: true,
+            [producer]);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, result.Value.References.Count);
+        Assert.Contains(
+            result.Value.References,
+            reference =>
+                reference.Namespace == "product-subject" &&
+                reference.Digest == new string('a', 64));
+        Assert.Contains(
+            result.Value.References,
+            reference =>
+                reference.Namespace ==
+                NotificationHistoryReferenceKey.RecipientNamespace);
+    }
+
+    [Fact]
+    public void Create_rejects_a_producer_owned_recipient_reference()
+    {
+        NotificationHistoryReferenceKey reserved =
+            NotificationHistoryReferenceKey.ForRecipient(
+                "tenant-b",
+                "user-b").Value;
+
+        Result<UserNotification> result = UserNotification.Create(
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            "tenant-a",
+            "user-a",
+            "catalog",
+            "catalog.item-updated",
+            1,
+            "Item updated",
+            null,
+            NotificationSeverity.Info,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            "{}",
+            ["delivery:web"],
+            NotificationDeliveryPolicy.RespectPreferences,
+            isInboxVisible: true,
+            [reserved]);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            NotificationsDomainErrors.HistoryReferenceInvalid,
+            result.Error);
+    }
+
+    [Fact]
+    public void Recipient_reference_normalizes_and_rejects_invalid_coordinates()
+    {
+        Result<NotificationHistoryReferenceKey> normalized =
+            NotificationHistoryReferenceKey.ForRecipient(
+                " tenant-a ",
+                " user-a ");
+        Result<NotificationHistoryReferenceKey> canonical =
+            NotificationHistoryReferenceKey.ForRecipient(
+                "tenant-a",
+                "user-a");
+        Result<NotificationHistoryReferenceKey> invalidScope =
+            NotificationHistoryReferenceKey.ForRecipient(
+                " ",
+                "user-a");
+        Result<NotificationHistoryReferenceKey> invalidRecipient =
+            NotificationHistoryReferenceKey.ForRecipient(
+                "tenant-a",
+                " ");
+
+        Assert.True(normalized.IsSuccess);
+        Assert.Equal(canonical.Value, normalized.Value);
+        Assert.True(invalidScope.IsFailure);
+        Assert.True(invalidRecipient.IsFailure);
+    }
+
     private static UserNotification CreateNotification() =>
         UserNotification.Create(
             Guid.Parse("11111111-1111-1111-1111-111111111111"),

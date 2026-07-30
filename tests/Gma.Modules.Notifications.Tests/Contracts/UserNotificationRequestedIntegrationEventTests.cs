@@ -142,7 +142,7 @@ public sealed class UserNotificationRequestedIntegrationEventTests
         using ServiceProvider provider = services.BuildServiceProvider();
         IReadOnlyCollection<IntegrationEventSubscription> subscriptions =
             provider.GetRequiredService<IIntegrationEventSubscriptionRegistry>().Subscriptions;
-        Assert.Equal(2, subscriptions.Count);
+        Assert.Equal(3, subscriptions.Count);
         IntegrationEventSubscription subscription = Assert.Single(
             subscriptions,
             item => item.EventType == typeof(UserNotificationRequestedIntegrationEvent));
@@ -163,5 +163,13 @@ public sealed class UserNotificationRequestedIntegrationEventTests
         Assert.Equal(
             NotificationsIntegrationSubjects.CreateUserNotificationRequestedV2("catalog"),
             v2.Subject);
+        IntegrationEventSubscription v3 = Assert.Single(
+            subscriptions,
+            item => item.EventType == typeof(UserNotificationRequestedIntegrationEventV3));
+        Assert.Equal(UserNotificationRequestedIntegrationEventV3.EventVersion, v3.Version);
+        Assert.Equal("catalog-notification-request-v3", v3.HandlerName);
+        Assert.Equal(
+            NotificationsIntegrationSubjects.CreateUserNotificationRequestedV3("catalog"),
+            v3.Subject);
     }
 }

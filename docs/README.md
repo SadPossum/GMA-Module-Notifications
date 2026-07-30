@@ -132,6 +132,23 @@ Other pipelines implement `IUserNotificationSink`, declare supported `delivery:*
 
 Notifications exposes contracts, the request projector, and adapter seams for optional product integrations. Reusable bridges that know about another module belong in a composition-owned extensions repository, not in this module. `Gma.Extensions.Auth.Notifications`, for example, can map Auth events into mandatory security notifications without making either module depend on the other.
 
+Version 3 addressed-notification requests may carry up to eight producer-owned
+history references. Each reference is a bounded namespace plus a SHA-256 digest
+of a versioned canonical coordinate. The digest is pseudonymous, not
+anonymised: producers define a high-entropy opaque coordinate and must not
+place raw identifiers, names, addresses, booking references, or free text in
+the reference.
+
+`INotificationHistoryLifecycle` is an in-process application boundary for
+authorized product adapters. It can prepare one empty versioned reference,
+read a bounded exact-reference snapshot or page, and close that reference with
+an idempotent operation id. Close removes the addressed inbox copies and
+delivery history, refuses active delivery leases, advances companion reference
+versions, and leaves an immutable generic receipt and terminal tombstone.
+There is deliberately no user or admin endpoint for this surface: products own
+authorization, legal decisions, subject discovery, export assembly, and
+restore orchestration.
+
 ## User API
 
 All user endpoints require authentication and scope context. Tenant claims must match the active scope.
@@ -151,7 +168,7 @@ All user endpoints require authentication and scope context. Tenant claims must 
 | `POST` | `/api/notifications/broadcasts/read-all` | Mark all visible broadcasts read. |
 | `GET` | `/api/notifications/broadcasts/stream` | Stream newly committed broadcasts. |
 
-History exposes only rows whose V2 plan made `delivery:web` visible. Suppressed email-only jobs do not leak into the web inbox.
+History exposes only rows whose V2 or V3 plan made `delivery:web` visible. Suppressed email-only jobs do not leak into the web inbox.
 
 Durable SSE streams use one database sequence-head monitor per process, rather than one database polling loop per connection. The monitor wakes only the affected stream kind, full result batches drain immediately, and an idle connection receives a `heartbeat` event with `null` data. Heartbeat timeout also performs a fallback query, so a stream recovers if the monitor temporarily cannot reach the database. This is process-local coordination, not a multi-region backplane; each application replica runs its own monitor.
 
@@ -182,7 +199,10 @@ Delivery lists support `status`, `userId`, `deliveryTag`, `page`, and `pageSize`
 
 The `notifications` schema owns:
 
-- `user_notifications` and `user_notification_tags`;
+- `user_notifications`, `user_notification_tags`, and indexed
+  `user_notification_references`;
+- `notification_history_reference_states` and append-only
+  `notification_history_close_receipts`;
 - `tag_definitions` and `preferences`;
 - `delivery_routes`, `deliveries`, and `delivery_attempts`;
 - `notification_broadcasts` and recipient read receipts;
@@ -190,7 +210,15 @@ The `notifications` schema owns:
 
 SQL Server and PostgreSQL have provider-specific migrations. The V2 migration backfills legacy notification rows with `delivery:web` and `respect-preferences`, preserving existing inbox behavior. Run the selected provider migrations before enabling the module.
 
-Retention is disabled until the product chooses policy. When enabled, cleanup is bounded and includes old attempt rows according to `Notifications:Delivery:AttemptRetentionDays`.
+Retention is disabled until the product chooses policy. When enabled, cleanup
+is bounded, includes old attempt rows according to
+`Notifications:Delivery:AttemptRetentionDays`, and advances every affected
+history-reference version before deleting notification content. Open
+zero-record reference state is retained so an old frozen version cannot become
+valid again after recreation. Closed state and close receipts are also retained
+to keep replay suppression and restore proof intact. A future compaction policy
+must therefore account for outstanding product decisions and backup expiry; it
+cannot be a blind row-age cleanup.
 
 Notification titles, bodies, payload JSON, recipient ids, delivery destinations resolved by adapters, and provider receipts may be sensitive operational or personal data. Products must minimize producer payloads, select retention values, configure database/backups/log encryption and access controls, and verify any legal deletion requirements. The reusable module cannot select those policies for every host. Provider adapters must honor the stable delivery id as an idempotency key and must reject time-limited work after the producer-specific expiry encoded in the message or resolved by a composition-owned bridge.
 
@@ -235,10 +263,11 @@ builder.AddAdminApiModule<NotificationsAdminApiModule>();
 builder.Services.AddUserNotificationRequestSubscription(OrderingModuleMetadata.Name);
 ```
 
-Producer subscriptions are explicit and producer-scoped. V1 and V2 have distinct durable consumer bindings. The physical V2 subject is:
+Producer subscriptions are explicit and producer-scoped. V1, V2, and V3 have
+distinct durable consumer bindings. The physical V3 subject is:
 
 ```text
-{application-namespace}.{producer-module}.user-notification-requested.v2
+{application-namespace}.{producer-module}.user-notification-requested.v3
 ```
 
 The in-process `IUserNotificationHistoryWriter` also projects through the V2 planner, so direct runtime publishing and outbox-driven ingestion use the same tag/preference/routing rules.

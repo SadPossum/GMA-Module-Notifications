@@ -21,4 +21,13 @@ public static class NotificationsIntegrationSubjects
             producerModule,
             UserNotificationRequestedIntegrationEventV2.EventType,
             UserNotificationRequestedIntegrationEventV2.EventVersion);
+
+    public static string CreateUserNotificationRequestedV3(
+        string producerModule,
+        string subjectPrefix = IntegrationEventNaming.DefaultSubjectPrefix) =>
+        IntegrationEventNaming.CreateSubject(
+            subjectPrefix,
+            producerModule,
+            UserNotificationRequestedIntegrationEventV3.EventType,
+            UserNotificationRequestedIntegrationEventV3.EventVersion);
 }

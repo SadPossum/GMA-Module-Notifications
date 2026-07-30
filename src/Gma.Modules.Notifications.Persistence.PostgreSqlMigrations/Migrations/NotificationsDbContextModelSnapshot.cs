@@ -549,6 +549,129 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
                     b.ToTable("delivery_attempts", "notifications");
                 });
 
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.NotificationHistoryCloseReceipt", b =>
+                {
+                    b.Property<string>("ScopeId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Digest")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .IsFixedLength();
+
+                    b.Property<string>("Namespace")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("RemovedRecordCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RemovedRecordIdsSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .IsFixedLength();
+
+                    b.Property<string>("RequestSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .IsFixedLength();
+
+                    b.Property<long>("ResultingVersion")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ScopeId", "OperationId");
+
+                    b.HasIndex("ScopeId", "Namespace", "Digest", "CompletedAtUtc");
+
+                    b.ToTable("notification_history_close_receipts", "notifications", t =>
+                        {
+                            t.HasCheckConstraint("CK_notification_history_close_receipts_count", "\"RemovedRecordCount\" >= 0");
+
+                            t.HasCheckConstraint("CK_notification_history_close_receipts_version", "\"ResultingVersion\" >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.NotificationHistoryReferenceState", b =>
+                {
+                    b.Property<string>("ScopeId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Namespace")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Digest")
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .IsFixedLength();
+
+                    b.Property<Guid?>("CloseOperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CloseRequestSha256")
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .IsFixedLength();
+
+                    b.Property<DateTimeOffset?>("ClosedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsClosed")
+                        .HasColumnType("boolean");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ScopeId", "Namespace", "Digest");
+
+                    b.HasIndex("ScopeId", "IsClosed", "ClosedAtUtc");
+
+                    b.ToTable("notification_history_reference_states", "notifications", t =>
+                        {
+                            t.HasCheckConstraint("CK_notification_history_reference_states_version", "\"Version\" >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.UserNotificationReference", b =>
+                {
+                    b.Property<string>("ScopeId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("NotificationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Namespace")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Digest")
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .IsFixedLength();
+
+                    b.HasKey("ScopeId", "NotificationId", "Namespace", "Digest");
+
+                    b.HasIndex("NotificationId");
+
+                    b.HasIndex("ScopeId", "Namespace", "Digest", "NotificationId");
+
+                    b.ToTable("user_notification_references", "notifications");
+                });
+
             modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.UserNotificationTag", b =>
                 {
                     b.Property<string>("ScopeId")
@@ -718,6 +841,21 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.UserNotificationReference", b =>
+                {
+                    b.HasOne("Gma.Modules.Notifications.Domain.Aggregates.UserNotification", null)
+                        .WithMany("References")
+                        .HasForeignKey("NotificationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Gma.Modules.Notifications.Domain.Entities.NotificationHistoryReferenceState", null)
+                        .WithMany()
+                        .HasForeignKey("ScopeId", "Namespace", "Digest")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.UserNotificationTag", b =>
                 {
                     b.HasOne("Gma.Modules.Notifications.Domain.Aggregates.UserNotification", null)
@@ -729,6 +867,8 @@ namespace Gma.Modules.Notifications.Persistence.PostgreSqlMigrations.Migrations
 
             modelBuilder.Entity("Gma.Modules.Notifications.Domain.Aggregates.UserNotification", b =>
                 {
+                    b.Navigation("References");
+
                     b.Navigation("Tags");
                 });
 #pragma warning restore 612, 618

@@ -17,6 +17,7 @@ public sealed class UserNotification : ScopedAggregateRoot<Guid>
     public const int SeverityMaxLength = NotificationSeverityNames.MaxLength;
 
     private readonly List<UserNotificationTag> tags = [];
+    private readonly List<UserNotificationReference> references = [];
 
     private UserNotification() { }
 
@@ -37,6 +38,8 @@ public sealed class UserNotification : ScopedAggregateRoot<Guid>
     public NotificationDeliveryPolicy DeliveryPolicy { get; private set; }
     public bool IsInboxVisible { get; private set; }
     public IReadOnlyCollection<UserNotificationTag> Tags => this.tags;
+    public IReadOnlyCollection<UserNotificationReference> References =>
+        this.references;
 
     public static Result<UserNotification> Create(
         Guid id,
@@ -66,7 +69,8 @@ public sealed class UserNotification : ScopedAggregateRoot<Guid>
             payloadJson,
             ["delivery:web"],
             NotificationDeliveryPolicy.RespectPreferences,
-            isInboxVisible: true);
+            isInboxVisible: true,
+            references: []);
 
     public static Result<UserNotification> Create(
         Guid id,
@@ -83,7 +87,42 @@ public sealed class UserNotification : ScopedAggregateRoot<Guid>
         string payloadJson,
         IReadOnlyCollection<string> tags,
         NotificationDeliveryPolicy deliveryPolicy,
-        bool isInboxVisible)
+        bool isInboxVisible) =>
+        Create(
+            id,
+            scopeId,
+            userId,
+            module,
+            name,
+            version,
+            title,
+            body,
+            severity,
+            occurredAtUtc,
+            createdAtUtc,
+            payloadJson,
+            tags,
+            deliveryPolicy,
+            isInboxVisible,
+            []);
+
+    public static Result<UserNotification> Create(
+        Guid id,
+        string scopeId,
+        string userId,
+        string module,
+        string name,
+        int version,
+        string title,
+        string? body,
+        NotificationSeverity severity,
+        DateTimeOffset occurredAtUtc,
+        DateTimeOffset createdAtUtc,
+        string payloadJson,
+        IReadOnlyCollection<string> tags,
+        NotificationDeliveryPolicy deliveryPolicy,
+        bool isInboxVisible,
+        IReadOnlyCollection<NotificationHistoryReferenceKey> references)
     {
         if (id == Guid.Empty)
         {
@@ -125,7 +164,8 @@ public sealed class UserNotification : ScopedAggregateRoot<Guid>
         }
 
         if (deliveryPolicy is not NotificationDeliveryPolicy.RespectPreferences and not NotificationDeliveryPolicy.Mandatory ||
-            tags is null)
+            tags is null ||
+            references is null)
         {
             return Result.Failure<UserNotification>(NotificationsDomainErrors.DeliveryStatusInvalid);
         }
@@ -141,6 +181,25 @@ public sealed class UserNotification : ScopedAggregateRoot<Guid>
             !normalizedTags.Any(tag => tag.StartsWith("delivery:", StringComparison.Ordinal)))
         {
             return Result.Failure<UserNotification>(NotificationsDomainErrors.TagKeyInvalid);
+        }
+
+        if (references.Count >
+            NotificationHistoryReferenceKey.MaxProducerCount)
+        {
+            return Result.Failure<UserNotification>(
+                NotificationsDomainErrors.HistoryReferenceCountInvalid);
+        }
+
+        if (references.Any(reference =>
+                reference is null ||
+                string.Equals(
+                    reference.Namespace,
+                    NotificationHistoryReferenceKey.RecipientNamespace,
+                    StringComparison.Ordinal)) ||
+            references.Distinct().Count() != references.Count)
+        {
+            return Result.Failure<UserNotification>(
+                NotificationsDomainErrors.HistoryReferenceInvalid);
         }
 
         UserNotification notification = new(id, normalizedScopeId!)
@@ -167,6 +226,44 @@ public sealed class UserNotification : ScopedAggregateRoot<Guid>
             notification.tags.Add(assignment.Value);
         }
 
+        Result<NotificationHistoryReferenceKey> recipientReference =
+            NotificationHistoryReferenceKey.ForRecipient(
+                normalizedScopeId!,
+                recipient.Value.UserId);
+        if (recipientReference.IsFailure)
+        {
+            return Result.Failure<UserNotification>(
+                recipientReference.Error);
+        }
+
+        NotificationHistoryReferenceKey[] normalizedReferences = references
+            .Append(recipientReference.Value)
+            .OrderBy(reference => reference.Namespace, StringComparer.Ordinal)
+            .ThenBy(reference => reference.Digest, StringComparer.Ordinal)
+            .ToArray();
+        if (normalizedReferences.Length >
+            NotificationHistoryReferenceKey.MaxStoredCount)
+        {
+            return Result.Failure<UserNotification>(
+                NotificationsDomainErrors.HistoryReferenceCountInvalid);
+        }
+
+        foreach (NotificationHistoryReferenceKey reference in
+                 normalizedReferences)
+        {
+            Result<UserNotificationReference> assignment =
+                UserNotificationReference.Create(
+                    id,
+                    normalizedScopeId!,
+                    reference);
+            if (assignment.IsFailure)
+            {
+                return Result.Failure<UserNotification>(assignment.Error);
+            }
+
+            notification.references.Add(assignment.Value);
+        }
+
         return Result.Success(notification);
     }
 
@@ -179,6 +276,11 @@ public sealed class UserNotification : ScopedAggregateRoot<Guid>
 
         this.ReadAtUtc = readAtUtc;
         return true;
+    }
+
+    public void SetInboxVisibility(bool isInboxVisible)
+    {
+        this.IsInboxVisible = isInboxVisible;
     }
 
     private static bool IsValidSeverity(NotificationSeverity severity) =>
