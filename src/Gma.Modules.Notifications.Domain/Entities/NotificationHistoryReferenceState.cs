@@ -133,8 +133,9 @@ public sealed class NotificationHistoryReferenceState : IScopedEntity
 
 public enum NotificationHistoryReferenceCloseTransition
 {
-    Invalid = 0,
+    Unknown = 0,
     Completed = 1,
     Replay = 2,
-    Conflict = 3
+    Conflict = 3,
+    Invalid = 4
 }
