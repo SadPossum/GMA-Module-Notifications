@@ -95,7 +95,18 @@ public sealed class NotificationsRelationalIntegrationTests
 
         Assert.Equal(notificationSequences.Max(), pulse.CaptureVersion(NotificationStreamKind.History));
         Assert.Equal(broadcastSequences.Max(), pulse.CaptureVersion(NotificationStreamKind.Broadcasts));
-        await AssertRetentionQueriesAsync(provider);
+    }
+
+    [DockerFact]
+    public async Task Retention_deletes_only_completed_history_and_advances_reference_versions_on_postgresql()
+    {
+        await using PostgreSqlContainer postgreSql =
+            await StartPostgreSqlAsync("notifications_retention_tests");
+        await using ServiceProvider provider =
+            CreateProvider(postgreSql.GetConnectionString());
+        await MigrateAsync(provider);
+
+        await AssertRetentionLifecycleAsync(provider);
     }
 
     [DockerFact]
@@ -157,7 +168,7 @@ public sealed class NotificationsRelationalIntegrationTests
         Assert.Equal(2, claims[0].Length);
         Assert.Equal(2, claims[1].Length);
         Assert.Empty(claims[0].Intersect(claims[1]));
-        await AssertRetentionQueriesAsync(provider);
+        await AssertRetentionLifecycleAsync(provider);
     }
 
     [DockerFact]
@@ -768,7 +779,8 @@ public sealed class NotificationsRelationalIntegrationTests
         await dbContext.SaveChangesAsync();
     }
 
-    private static async Task AssertRetentionQueriesAsync(ServiceProvider provider)
+    private static async Task AssertRetentionLifecycleAsync(
+        ServiceProvider provider)
     {
         DateTimeOffset old = Now.AddDays(-400);
         UserNotification activeNotification = CreateNotification(
@@ -837,7 +849,65 @@ public sealed class NotificationsRelationalIntegrationTests
 
         Assert.Equal(completedNotification.Id, Assert.Single(expiredNotifications).Id);
         Assert.Equal(completedAttempt.Id, Assert.Single(expiredAttempts).Id);
+
+        ContractHistoryReference activeReference =
+            ContractHistoryReference.ForRecipient(
+                "tenant-a",
+                "active-retention-user");
+        ContractHistoryReference completedReference =
+            ContractHistoryReference.ForRecipient(
+                "tenant-a",
+                "completed-retention-user");
+        long activeReferenceVersion = await ReferenceVersionAsync(
+            dbContext,
+            activeReference);
+        long completedReferenceVersion = await ReferenceVersionAsync(
+            dbContext,
+            completedReference);
+
+        int removed = await NotificationRetentionService
+            .DeleteExpiredNotificationsBatchAsync(
+                dbContext,
+                Now.AddDays(-90),
+                Now.AddDays(-365),
+                batchSize: 100,
+                CancellationToken.None);
+
+        Assert.Equal(1, removed);
+        dbContext.ChangeTracker.Clear();
+        Assert.True(await dbContext.UserNotifications
+            .AnyAsync(notification =>
+                notification.Id == activeNotification.Id));
+        Assert.False(await dbContext.UserNotifications
+            .AnyAsync(notification =>
+                notification.Id == completedNotification.Id));
+        Assert.True(await dbContext.NotificationDeliveries
+            .AnyAsync(delivery => delivery.Id == activeDelivery.Id));
+        Assert.False(await dbContext.NotificationDeliveries
+            .AnyAsync(delivery => delivery.Id == completedDelivery.Id));
+        Assert.True(await dbContext.NotificationDeliveryAttempts
+            .AnyAsync(attempt => attempt.Id == activeAttempt.Id));
+        Assert.False(await dbContext.NotificationDeliveryAttempts
+            .AnyAsync(attempt => attempt.Id == completedAttempt.Id));
+        Assert.Equal(
+            activeReferenceVersion,
+            await ReferenceVersionAsync(dbContext, activeReference));
+        Assert.Equal(
+            completedReferenceVersion + 1,
+            await ReferenceVersionAsync(dbContext, completedReference));
     }
+
+    private static Task<long> ReferenceVersionAsync(
+        NotificationsDbContext dbContext,
+        ContractHistoryReference reference) =>
+        dbContext.NotificationHistoryReferenceStates
+            .AsNoTracking()
+            .Where(state =>
+                state.ScopeId == "tenant-a" &&
+                state.Namespace == reference.Namespace &&
+                state.Digest == reference.Digest)
+            .Select(state => state.Version)
+            .SingleAsync();
 
     private static async Task AddNotificationAsync(
         NotificationsDbContext dbContext,
