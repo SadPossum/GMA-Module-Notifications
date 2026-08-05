@@ -187,10 +187,15 @@ internal sealed class NotificationBroadcastRepository(NotificationsDbContext dbC
             return false;
         }
 
-        await this.InsertReadReceiptIfMissingAsync(
+        int inserted = await this.InsertReadReceiptIfMissingAsync(
                 broadcastId,
                 recipient,
                 readAtUtc,
+                cancellationToken)
+            .ConfigureAwait(false);
+        await this.RegisterRelationalTenantReadMutationAsync(
+                recipient,
+                inserted,
                 cancellationToken)
             .ConfigureAwait(false);
         return true;
@@ -236,6 +241,11 @@ internal sealed class NotificationBroadcastRepository(NotificationsDbContext dbC
             lastStreamSequence = unreadBroadcasts[^1].StreamSequence;
         }
 
+        await this.RegisterRelationalTenantReadMutationAsync(
+                recipient,
+                updatedCount,
+                cancellationToken)
+            .ConfigureAwait(false);
         return updatedCount;
     }
 
@@ -298,6 +308,26 @@ internal sealed class NotificationBroadcastRepository(NotificationsDbContext dbC
                 read.RecipientScope == recipient.RecipientScope &&
                 read.RecipientKind == recipient.RecipientKind &&
                 read.Recipient == recipient.Recipient);
+    }
+
+    private async Task RegisterRelationalTenantReadMutationAsync(
+        NotificationBroadcastRecipientContext recipient,
+        int insertedCount,
+        CancellationToken cancellationToken)
+    {
+        if (insertedCount == 0 ||
+            recipient.ScopeId is null ||
+            !dbContext.Database.IsRelational())
+        {
+            return;
+        }
+
+        if (!await dbContext.TryRegisterScopeMutationAsync(
+                recipient.ScopeId,
+                cancellationToken).ConfigureAwait(false))
+        {
+            throw new NotificationScopeClosedException();
+        }
     }
 
     private async Task<int> InsertReadReceiptIfMissingAsync(

@@ -2,6 +2,8 @@
 
 Production hardening work is tracked in [Notifications Production Hardening Task](notifications-production-hardening-task.md).
 The reusable reference lifecycle is specified in [Notification History Lifecycle Task](notification-history-lifecycle-task.md).
+Large-history and generic scope closure are tracked in
+[Notification Lifecycle Scaling Task](notification-lifecycle-scaling-task.md).
 
 The optional Notifications module owns durable, addressed user notifications. It stores inbox history and read state, persists a tenant-scoped tag catalog and user preferences, plans durable adapter deliveries, records immutable attempts/receipts, and exposes user and operator APIs. It also owns durable audience broadcasts.
 
@@ -19,8 +21,13 @@ Gma.Modules.Notifications.Persistence.PostgreSqlMigrations
 Gma.Modules.Notifications.Api
 Gma.Modules.Notifications.Admin.Contracts
 Gma.Modules.Notifications.AdminApi
+Gma.Modules.Notifications.AdminCli
 Gma.Modules.Notifications.Adapters.Email
 ```
+
+`Gma.Modules.Notifications.AdminCli` is a composition-only adapter. It wires
+the module for hosts that need Notifications-owned persistence but does not
+claim operator commands that the generic module does not provide.
 
 `NotificationsProfiles.Default` provides the `history`, `broadcasts`, `preferences`, `routing`, and `durable-delivery` composition features and requires scope context. Applications explicitly select the API/admin surfaces and any delivery adapters they need. Realtime SSE/SignalR remains a separately composed, best-effort framework concern.
 
@@ -143,12 +150,42 @@ the reference.
 `INotificationHistoryLifecycle` is an in-process application boundary for
 authorized product adapters. It can prepare one empty versioned reference,
 read a bounded exact-reference snapshot or page, and close that reference with
-an idempotent operation id. Close removes the addressed inbox copies and
-delivery history, refuses active delivery leases, advances companion reference
-versions, and leaves an immutable generic receipt and terminal tombstone.
+an idempotent operation id. `CloseAsync` remains an atomic operation for small
+histories. `CloseBatchAsync` closes the tombstone on its first accepted call and
+then removes large histories over restart-safe bounded batches, recording
+durable progress until it replaces that progress with an immutable completion
+receipt. Both modes refuse active delivery leases, advance companion reference
+versions, and prevent later projection from recreating the addressed history.
 There is deliberately no user or admin endpoint for this surface: products own
 authorization, legal decisions, subject discovery, export assembly, and
 restore orchestration.
+
+Notifications also owns a monotonic state for every mutated tenant scope. The
+state advances once per Notifications unit of work and is checked by tracked
+writes, inbox handling, set-based maintenance, raw receipt writes, retention,
+and delivery claiming. Closing that state suppresses late inbox messages and
+prevents background work from recreating or externally delivering closed-scope
+data. Global broadcasts remain outside tenant scope lifecycle. The state is a
+module-local consistency boundary, not a framework tenant registry or a public
+administration API.
+
+`INotificationScopeLifecycle` exposes a read-only, in-process scope snapshot and
+typed export pages for product composition. Pages use stable keyset cursors,
+are capped at 200 records, and must match one selected scope revision. The
+export covers tenant notification history, preferences, routing/tag
+configuration, delivery and attempt state, tenant broadcasts and reads, and
+reference lifecycle proof. It never exports module inbox rows or interprets
+opaque producer payload JSON. Products remain responsible for authorization,
+artifact schemas, export sinks, and final revision verification.
+
+The same application port offers resumable scope destruction as a separate
+operation. Its first accepted call closes the module-owned scope tombstone;
+later calls remove one bounded batch through inbox, tenant broadcast,
+configuration, and notification aggregate stages. Active delivery leases or an
+exact-reference close already in progress return a retryable busy status. The
+terminal tombstone, append-only payload-free scope receipt, and existing
+reference lifecycle proof are deliberately retained. Products decide when
+export is accepted and when destruction may begin.
 
 ## User API
 
@@ -204,6 +241,8 @@ The `notifications` schema owns:
   `user_notification_references`;
 - `notification_history_reference_states` and append-only
   `notification_history_close_receipts`;
+- mutable in-progress `notification_history_batch_close_operations` and
+  append-only `notification_history_batch_close_receipts`;
 - `tag_definitions` and `preferences`;
 - `delivery_routes`, `deliveries`, and `delivery_attempts`;
 - `notification_broadcasts` and recipient read receipts;

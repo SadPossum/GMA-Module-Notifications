@@ -20,7 +20,7 @@ using DomainDeliveryPolicy = Domain.ValueObjects.NotificationDeliveryPolicy;
 using DomainDeliveryStatus = Domain.ValueObjects.NotificationDeliveryStatus;
 using DomainSeverity = Domain.ValueObjects.NotificationSeverity;
 
-internal sealed class NotificationHistoryLifecycleService(
+internal sealed partial class NotificationHistoryLifecycleService(
     NotificationsDbContext dbContext,
     IScopeContext scopeContext,
     ISystemClock clock)

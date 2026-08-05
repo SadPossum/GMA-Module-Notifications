@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\Gma.Modules.Notifications.Application\Gma.Modules.Notifications.Application.csproj" />
+    <ProjectReference Include="..\Gma.Modules.Notifications.Contracts\Gma.Modules.Notifications.Contracts.csproj" />
+    <ProjectReference Include="..\Gma.Modules.Notifications.Persistence\Gma.Modules.Notifications.Persistence.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Administration\Gma.Framework.Administration.Cli\Gma.Framework.Administration.Cli.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Modules\Gma.Framework.ModuleComposition\Gma.Framework.ModuleComposition.csproj" />
+  </ItemGroup>
+</Project>

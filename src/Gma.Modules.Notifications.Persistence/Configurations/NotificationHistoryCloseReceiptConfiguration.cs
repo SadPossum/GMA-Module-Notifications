@@ -15,6 +15,8 @@ internal sealed class NotificationHistoryCloseReceiptConfiguration
             "notification_history_close_receipts",
             table =>
             {
+                table.HasTrigger(
+                    "notification_history_close_receipts_append_only");
                 table.HasCheckConstraint(
                     "CK_notification_history_close_receipts_version",
                     "\"ResultingVersion\" >= 1");
@@ -50,5 +52,14 @@ internal sealed class NotificationHistoryCloseReceiptConfiguration
             receipt.Digest,
             receipt.CompletedAtUtc
         });
+        builder.HasOne<NotificationHistoryReferenceState>()
+            .WithMany()
+            .HasForeignKey(receipt => new
+            {
+                receipt.ScopeId,
+                receipt.Namespace,
+                receipt.Digest
+            })
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

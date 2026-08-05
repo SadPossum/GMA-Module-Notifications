@@ -86,6 +86,16 @@ internal sealed class NotificationRetentionService(
                     token),
                 cancellationToken)
             .ConfigureAwait(false);
+        int broadcastReadCount = await BoundedBatchProcessor.ExecuteAsync(
+                settings.BatchSize,
+                settings.MaxBatchesPerCategoryPerCycle,
+                (batchSize, token) => DeleteExpiredBroadcastReadsBatchAsync(
+                    dbContext,
+                    broadcastsBefore,
+                    batchSize,
+                    token),
+                cancellationToken)
+            .ConfigureAwait(false);
         int broadcastCount = await BoundedBatchProcessor.ExecuteAsync(
                 settings.BatchSize,
                 settings.MaxBatchesPerCategoryPerCycle,
@@ -97,11 +107,15 @@ internal sealed class NotificationRetentionService(
                 cancellationToken)
             .ConfigureAwait(false);
 
-        if (notificationCount > 0 || broadcastCount > 0 || attemptCount > 0)
+        if (notificationCount > 0 ||
+            broadcastReadCount > 0 ||
+            broadcastCount > 0 ||
+            attemptCount > 0)
         {
             logger.LogInformation(
-                "Notification retention removed {NotificationCount} user notifications, {BroadcastCount} broadcasts, and {DeliveryAttemptCount} delivery attempts.",
+                "Notification retention removed {NotificationCount} user notifications, {BroadcastReadCount} broadcast read receipts, {BroadcastCount} broadcasts, and {DeliveryAttemptCount} delivery attempts.",
                 notificationCount,
+                broadcastReadCount,
                 broadcastCount,
                 attemptCount);
         }
@@ -113,22 +127,40 @@ internal sealed class NotificationRetentionService(
         int batchSize,
         CancellationToken cancellationToken)
     {
-        Guid[] attemptIds = await ExpiredDeliveryAttempts(dbContext, completedBefore)
+        await using IDbContextTransaction? transaction =
+            await BeginSerializableTransactionAsync(dbContext, cancellationToken)
+                .ConfigureAwait(false);
+        var candidates = await ExpiredDeliveryAttempts(dbContext, completedBefore)
             .OrderBy(attempt => attempt.CompletedAtUtc)
-            .Select(attempt => attempt.Id)
+            .ThenBy(attempt => attempt.Id)
+            .Select(attempt => new
+            {
+                attempt.Id,
+                attempt.ScopeId
+            })
             .Take(batchSize)
             .ToArrayAsync(cancellationToken)
             .ConfigureAwait(false);
-        if (attemptIds.Length == 0)
+        if (candidates.Length == 0)
         {
             return 0;
         }
 
-        return await dbContext.NotificationDeliveryAttempts
+        await RegisterMaintenanceScopesAsync(
+                dbContext,
+                candidates.Select(candidate => candidate.ScopeId),
+                cancellationToken)
+            .ConfigureAwait(false);
+        Guid[] attemptIds = candidates
+            .Select(candidate => candidate.Id)
+            .ToArray();
+        int removed = await dbContext.NotificationDeliveryAttempts
             .IgnoreQueryFilters()
             .Where(attempt => attemptIds.Contains(attempt.Id))
             .ExecuteDeleteAsync(cancellationToken)
             .ConfigureAwait(false);
+        await CommitAsync(transaction, cancellationToken).ConfigureAwait(false);
+        return removed;
     }
 
     internal static async Task<int> DeleteExpiredNotificationsBatchAsync(
@@ -146,20 +178,33 @@ internal sealed class NotificationRetentionService(
                         cancellationToken)
                     .ConfigureAwait(false)
                 : null;
-        Guid[] notificationIds = await ExpiredUserNotifications(dbContext, readBefore, unreadBefore)
+        var candidates = await ExpiredUserNotifications(dbContext, readBefore, unreadBefore)
             .OrderBy(notification => notification.CreatedAtUtc)
-            .Select(notification => notification.Id)
+            .ThenBy(notification => notification.Id)
+            .Select(notification => new
+            {
+                notification.Id,
+                notification.ScopeId
+            })
             .Take(batchSize)
             .ToArrayAsync(cancellationToken)
             .ConfigureAwait(false);
-        if (notificationIds.Length == 0)
+        if (candidates.Length == 0)
         {
             return 0;
         }
 
+        Guid[] notificationIds = candidates
+            .Select(candidate => candidate.Id)
+            .ToArray();
         int removed;
         if (dbContext.Database.IsRelational())
         {
+            await RegisterMaintenanceScopesAsync(
+                    dbContext,
+                    candidates.Select(candidate => candidate.ScopeId),
+                    cancellationToken)
+                .ConfigureAwait(false);
             await dbContext.NotificationHistoryReferenceStates
                 .IgnoreQueryFilters()
                 .Where(state =>
@@ -241,35 +286,121 @@ internal sealed class NotificationRetentionService(
         return removed;
     }
 
-    private static async Task<int> DeleteExpiredBroadcastsBatchAsync(
+    internal static async Task<int> DeleteExpiredBroadcastReadsBatchAsync(
         NotificationsDbContext dbContext,
         DateTimeOffset createdBefore,
         int batchSize,
         CancellationToken cancellationToken)
     {
-        Guid[] broadcastIds = await dbContext.NotificationBroadcasts
+        await using IDbContextTransaction? transaction =
+            await BeginSerializableTransactionAsync(dbContext, cancellationToken)
+                .ConfigureAwait(false);
+        var candidates = await dbContext.NotificationBroadcastReads
             .IgnoreQueryFilters()
-            .Where(broadcast => broadcast.CreatedAtUtc < createdBefore)
-            .OrderBy(broadcast => broadcast.CreatedAtUtc)
-            .Select(broadcast => broadcast.Id)
+            .Where(read => dbContext.NotificationBroadcasts
+                .IgnoreQueryFilters()
+                .Any(broadcast =>
+                    broadcast.Id == read.BroadcastId &&
+                    broadcast.CreatedAtUtc < createdBefore))
+            .Where(read => !dbContext.NotificationScopeStates
+                .IgnoreQueryFilters()
+                .Any(state =>
+                    state.IsClosed &&
+                    read.RecipientScope ==
+                    NotificationBroadcastRead.TenantRecipientScopePrefix +
+                    state.ScopeId))
+            .OrderBy(read => read.ReadAtUtc)
+            .ThenBy(read => read.Id)
+            .Select(read => new
+            {
+                read.Id,
+                read.RecipientScope
+            })
             .Take(batchSize)
             .ToArrayAsync(cancellationToken)
             .ConfigureAwait(false);
-        if (broadcastIds.Length == 0)
+        if (candidates.Length == 0)
         {
             return 0;
         }
 
-        await dbContext.NotificationBroadcastReads
+        string[] scopeIds = candidates
+            .Select(candidate => candidate.RecipientScope)
+            .Where(recipientScope => recipientScope.StartsWith(
+                NotificationBroadcastRead.TenantRecipientScopePrefix,
+                StringComparison.Ordinal))
+            .Select(recipientScope => recipientScope[
+                NotificationBroadcastRead.TenantRecipientScopePrefix.Length..])
+            .ToArray();
+        await RegisterMaintenanceScopesAsync(
+                dbContext,
+                scopeIds,
+                cancellationToken)
+            .ConfigureAwait(false);
+        Guid[] readIds = candidates.Select(candidate => candidate.Id).ToArray();
+        int removed = await dbContext.NotificationBroadcastReads
             .IgnoreQueryFilters()
-            .Where(read => broadcastIds.Contains(read.BroadcastId))
+            .Where(read => readIds.Contains(read.Id))
             .ExecuteDeleteAsync(cancellationToken)
             .ConfigureAwait(false);
-        return await dbContext.NotificationBroadcasts
+        await CommitAsync(transaction, cancellationToken).ConfigureAwait(false);
+        return removed;
+    }
+
+    internal static async Task<int> DeleteExpiredBroadcastsBatchAsync(
+        NotificationsDbContext dbContext,
+        DateTimeOffset createdBefore,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        await using IDbContextTransaction? transaction =
+            await BeginSerializableTransactionAsync(dbContext, cancellationToken)
+                .ConfigureAwait(false);
+        var candidates = await dbContext.NotificationBroadcasts
+            .IgnoreQueryFilters()
+            .Where(broadcast => broadcast.CreatedAtUtc < createdBefore)
+            .Where(broadcast => !dbContext.NotificationBroadcastReads
+                .IgnoreQueryFilters()
+                .Any(read => read.BroadcastId == broadcast.Id))
+            .Where(broadcast =>
+                broadcast.ScopeId == null ||
+                !dbContext.NotificationScopeStates
+                    .IgnoreQueryFilters()
+                    .Any(state =>
+                        state.ScopeId == broadcast.ScopeId &&
+                        state.IsClosed))
+            .OrderBy(broadcast => broadcast.CreatedAtUtc)
+            .ThenBy(broadcast => broadcast.Id)
+            .Select(broadcast => new
+            {
+                broadcast.Id,
+                broadcast.ScopeId
+            })
+            .Take(batchSize)
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (candidates.Length == 0)
+        {
+            return 0;
+        }
+
+        await RegisterMaintenanceScopesAsync(
+                dbContext,
+                candidates
+                    .Select(candidate => candidate.ScopeId)
+                    .OfType<string>(),
+                cancellationToken)
+            .ConfigureAwait(false);
+        Guid[] broadcastIds = candidates
+            .Select(candidate => candidate.Id)
+            .ToArray();
+        int removed = await dbContext.NotificationBroadcasts
             .IgnoreQueryFilters()
             .Where(broadcast => broadcastIds.Contains(broadcast.Id))
             .ExecuteDeleteAsync(cancellationToken)
             .ConfigureAwait(false);
+        await CommitAsync(transaction, cancellationToken).ConfigureAwait(false);
+        return removed;
     }
 
     internal static IQueryable<UserNotification> ExpiredUserNotifications(
@@ -281,6 +412,11 @@ internal sealed class NotificationRetentionService(
 
         return dbContext.UserNotifications
             .IgnoreQueryFilters()
+            .Where(notification => !dbContext.NotificationScopeStates
+                .IgnoreQueryFilters()
+                .Any(state =>
+                    state.ScopeId == notification.ScopeId &&
+                    state.IsClosed))
             .Where(notification =>
                 (notification.ReadAtUtc != null && notification.ReadAtUtc < readBefore) ||
                 (notification.ReadAtUtc == null && notification.CreatedAtUtc < unreadBefore))
@@ -301,6 +437,11 @@ internal sealed class NotificationRetentionService(
 
         return dbContext.NotificationDeliveryAttempts
             .IgnoreQueryFilters()
+            .Where(attempt => !dbContext.NotificationScopeStates
+                .IgnoreQueryFilters()
+                .Any(state =>
+                    state.ScopeId == attempt.ScopeId &&
+                    state.IsClosed))
             .Where(attempt => attempt.CompletedAtUtc < completedBefore)
             .Where(attempt => !dbContext.NotificationDeliveries
                 .IgnoreQueryFilters()
@@ -310,4 +451,52 @@ internal sealed class NotificationRetentionService(
                      delivery.Status == NotificationDeliveryStatus.Processing ||
                      delivery.Status == NotificationDeliveryStatus.RetryScheduled)));
     }
+
+    private static async Task RegisterMaintenanceScopesAsync(
+        NotificationsDbContext dbContext,
+        IEnumerable<string> scopeIds,
+        CancellationToken cancellationToken)
+    {
+        string[] distinctScopeIds = scopeIds
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (distinctScopeIds.Length == 0)
+        {
+            return;
+        }
+
+        if (!await dbContext.TryRegisterMaintenanceScopeMutationsAsync(
+                distinctScopeIds,
+                cancellationToken).ConfigureAwait(false))
+        {
+            throw new NotificationScopeClosedException();
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static async Task<IDbContextTransaction?>
+        BeginSerializableTransactionAsync(
+            NotificationsDbContext dbContext,
+            CancellationToken cancellationToken)
+    {
+        if (!dbContext.Database.IsRelational() ||
+            dbContext.Database.CurrentTransaction is not null)
+        {
+            return null;
+        }
+
+        return await dbContext.Database.BeginTransactionAsync(
+                IsolationLevel.Serializable,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static Task CommitAsync(
+        IDbContextTransaction? transaction,
+        CancellationToken cancellationToken) =>
+        transaction is null
+            ? Task.CompletedTask
+            : transaction.CommitAsync(cancellationToken);
 }

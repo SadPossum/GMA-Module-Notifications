@@ -322,10 +322,22 @@ public sealed class NotificationHistoryPersistenceTests
             Guid.Parse("44444444-4444-4444-4444-444444444444"));
         dbContext.NotificationBroadcasts.AddRange(
             tenantBroadcast,
-            otherTenantBroadcast,
             platformBroadcast,
             adminOnlyBroadcast);
         await dbContext.SaveChangesAsync();
+        IScopeContextAccessor scopeContext = scope.ServiceProvider
+            .GetRequiredService<IScopeContextAccessor>();
+        scopeContext.SetScope("tenant-b");
+        using (IServiceScope tenantBScope = host.Services.CreateScope())
+        {
+            NotificationsDbContext tenantBDbContext = tenantBScope
+                .ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            tenantBDbContext.NotificationBroadcasts.Add(otherTenantBroadcast);
+            await tenantBDbContext.SaveChangesAsync();
+        }
+
+        scopeContext.SetScope("tenant-a");
 
         Result<NotificationBroadcastListResponse> result = await dispatcher.QueryAsync(
             new ListNotificationBroadcastsQuery(

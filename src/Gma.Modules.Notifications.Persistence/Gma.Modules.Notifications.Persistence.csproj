@@ -10,6 +10,7 @@
     <ProjectReference Include="..\Gma.Modules.Notifications.Domain\Gma.Modules.Notifications.Domain.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)Security\Gma.Framework.AccessControl\Gma.Framework.AccessControl.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)Cqrs\Gma.Framework.Cqrs\Gma.Framework.Cqrs.csproj" />
+    <ProjectReference Include="$(GmaFrameworkRoot)Domain\Gma.Framework.Domain\Gma.Framework.Domain.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)Messaging\Gma.Framework.Messaging\Gma.Framework.Messaging.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)Messaging\Gma.Framework.Messaging.Infrastructure\Gma.Framework.Messaging.Infrastructure.csproj" />
     <ProjectReference Include="$(GmaFrameworkRoot)Naming\Gma.Framework.Naming\Gma.Framework.Naming.csproj" />

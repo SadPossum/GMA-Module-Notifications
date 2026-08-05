@@ -250,8 +250,26 @@ internal sealed class NotificationHistoryRepository(NotificationsDbContext dbCon
 
         if (dbContext.Database.IsRelational())
         {
-            return await query
-                .Where(notification => notification.ReadAtUtc == null)
+            IQueryable<UserNotification> unread = query
+                .Where(notification => notification.ReadAtUtc == null);
+            string[] affectedScopeIds = await unread
+                .Select(notification => notification.ScopeId)
+                .Distinct()
+                .ToArrayAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (affectedScopeIds.Length == 0)
+            {
+                return 0;
+            }
+
+            if (!await dbContext.TryRegisterMaintenanceScopeMutationsAsync(
+                    affectedScopeIds,
+                    cancellationToken).ConfigureAwait(false))
+            {
+                throw new NotificationScopeClosedException();
+            }
+
+            return await unread
                 .ExecuteUpdateAsync(
                     setters => setters.SetProperty(notification => notification.ReadAtUtc, readAtUtc),
                     cancellationToken)

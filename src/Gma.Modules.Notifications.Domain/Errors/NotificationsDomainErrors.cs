@@ -37,4 +37,9 @@ public static class NotificationsDomainErrors
     public static readonly Error HistoryReferenceCountInvalid = new("Notifications.HistoryReferenceCountInvalid", "Notification history reference count is invalid.");
     public static readonly Error HistoryReferenceClosed = new("Notifications.HistoryReferenceClosed", "Notification history reference is closed.");
     public static readonly Error HistoryCloseReceiptInvalid = new("Notifications.HistoryCloseReceiptInvalid", "Notification history close receipt is invalid.");
+    public static readonly Error HistoryBatchCloseOperationInvalid = new("Notifications.HistoryBatchCloseOperationInvalid", "Notification history batch-close operation is invalid.");
+    public static readonly Error HistoryBatchCloseReceiptInvalid = new("Notifications.HistoryBatchCloseReceiptInvalid", "Notification history batch-close receipt is invalid.");
+    public static readonly Error ScopeStateInvalid = new("Notifications.ScopeStateInvalid", "Notification scope state is invalid.");
+    public static readonly Error ScopeDestroyOperationInvalid = new("Notifications.ScopeDestroyOperationInvalid", "Notification scope destruction operation is invalid.");
+    public static readonly Error ScopeDestroyReceiptInvalid = new("Notifications.ScopeDestroyReceiptInvalid", "Notification scope destruction receipt is invalid.");
 }

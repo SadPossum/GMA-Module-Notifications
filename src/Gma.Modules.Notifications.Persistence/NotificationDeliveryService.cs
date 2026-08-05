@@ -149,7 +149,14 @@ internal sealed class NotificationDeliveryService(
         NotificationDelivery? delivery = await dbContext.NotificationDeliveries
             .IgnoreQueryFilters()
             .SingleOrDefaultAsync(
-                item => item.Id == deliveryId && item.LockedBy == this.workerId,
+                item =>
+                    item.Id == deliveryId &&
+                    item.LockedBy == this.workerId &&
+                    !dbContext.NotificationScopeStates
+                        .IgnoreQueryFilters()
+                        .Any(state =>
+                            state.ScopeId == item.ScopeId &&
+                            state.IsClosed),
                 stoppingToken)
             .ConfigureAwait(false);
         if (delivery is null)
@@ -485,11 +492,16 @@ internal sealed class NotificationDeliveryService(
             return dbContext.NotificationDeliveries
                 .FromSqlInterpolated($"""
                     SELECT *
-                    FROM "notifications"."deliveries"
+                    FROM "notifications"."deliveries" AS delivery
                     WHERE "Attempts" < "MaxAttempts"
                       AND "Status" IN ({pending}, {retryScheduled}, {processing})
                       AND ("NextAttemptAtUtc" IS NULL OR "NextAttemptAtUtc" <= {nowUtc})
                       AND ("LockedUntilUtc" IS NULL OR "LockedUntilUtc" <= {nowUtc})
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM "notifications"."notification_scope_states" AS scope_state
+                          WHERE scope_state."ScopeId" = delivery."ScopeId"
+                            AND scope_state."IsClosed")
                     ORDER BY "NextAttemptAtUtc" NULLS FIRST, "CreatedAtUtc"
                     LIMIT {claimLimit}
                     FOR UPDATE SKIP LOCKED
@@ -503,11 +515,16 @@ internal sealed class NotificationDeliveryService(
             return dbContext.NotificationDeliveries
                 .FromSqlInterpolated($"""
                     SELECT TOP ({claimLimit}) *
-                    FROM [notifications].[deliveries] WITH (UPDLOCK, READPAST, ROWLOCK)
+                    FROM [notifications].[deliveries] AS [delivery] WITH (UPDLOCK, READPAST, ROWLOCK)
                     WHERE [Attempts] < [MaxAttempts]
                       AND [Status] IN ({pending}, {retryScheduled}, {processing})
                       AND ([NextAttemptAtUtc] IS NULL OR [NextAttemptAtUtc] <= {nowUtc})
                       AND ([LockedUntilUtc] IS NULL OR [LockedUntilUtc] <= {nowUtc})
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM [notifications].[notification_scope_states] AS [scope_state]
+                          WHERE [scope_state].[ScopeId] = [delivery].[ScopeId]
+                            AND [scope_state].[IsClosed] = 1)
                     ORDER BY [Status], [NextAttemptAtUtc], [LockedUntilUtc], [CreatedAtUtc]
                     """)
                 .IgnoreQueryFilters()
@@ -522,7 +539,12 @@ internal sealed class NotificationDeliveryService(
                  delivery.Status == NotificationDeliveryStatus.RetryScheduled ||
                  delivery.Status == NotificationDeliveryStatus.Processing) &&
                 (delivery.NextAttemptAtUtc == null || delivery.NextAttemptAtUtc <= nowUtc) &&
-                (delivery.LockedUntilUtc == null || delivery.LockedUntilUtc <= nowUtc))
+                (delivery.LockedUntilUtc == null || delivery.LockedUntilUtc <= nowUtc) &&
+                !dbContext.NotificationScopeStates
+                    .IgnoreQueryFilters()
+                    .Any(state =>
+                        state.ScopeId == delivery.ScopeId &&
+                        state.IsClosed))
             .OrderBy(delivery => delivery.NextAttemptAtUtc)
             .ThenBy(delivery => delivery.CreatedAtUtc)
             .Take(claimLimit)

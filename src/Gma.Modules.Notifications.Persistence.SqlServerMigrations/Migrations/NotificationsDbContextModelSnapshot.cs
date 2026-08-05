@@ -66,7 +66,8 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
                     b.Property<string>("ScopeId")
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)")
-                        .HasColumnName("ScopeId");
+                        .HasColumnName("ScopeId")
+                        .UseCollation("Latin1_General_100_BIN2");
 
                     b.Property<int>("Status")
                         .HasColumnType("int");
@@ -114,7 +115,8 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
 
                     b.Property<string>("ScopeId")
                         .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
 
                     b.Property<string>("Severity")
                         .IsRequired()
@@ -199,7 +201,8 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
                     b.Property<string>("ScopeId")
                         .IsRequired()
                         .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -243,7 +246,8 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
                     b.Property<string>("ScopeId")
                         .IsRequired()
                         .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
 
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
                         .HasColumnType("datetimeoffset");
@@ -279,7 +283,8 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
                     b.Property<string>("ScopeId")
                         .IsRequired()
                         .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
 
                     b.Property<string>("TagKey")
                         .IsRequired()
@@ -360,7 +365,8 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
                     b.Property<string>("ScopeId")
                         .IsRequired()
                         .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
 
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
                         .HasColumnType("datetimeoffset");
@@ -426,7 +432,8 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
                     b.Property<string>("ScopeId")
                         .IsRequired()
                         .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
 
                     b.Property<string>("Severity")
                         .IsRequired()
@@ -532,7 +539,8 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
                     b.Property<string>("ScopeId")
                         .IsRequired()
                         .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
 
                     b.Property<DateTimeOffset>("StartedAtUtc")
                         .HasColumnType("datetimeoffset");
@@ -549,11 +557,153 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
                     b.ToTable("delivery_attempts", "notifications");
                 });
 
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.NotificationHistoryBatchCloseOperation", b =>
+                {
+                    b.Property<string>("ScopeId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("BatchSize")
+                        .HasColumnType("int");
+
+                    b.Property<int>("CompletedBatchCount")
+                        .IsConcurrencyToken()
+                        .HasColumnType("int");
+
+                    b.Property<string>("Digest")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nchar(64)")
+                        .IsFixedLength();
+
+                    b.Property<long>("ExpectedVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Namespace")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<int>("ProofVersion")
+                        .HasColumnType("int");
+
+                    b.Property<string>("RemovalProofSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nchar(64)")
+                        .IsFixedLength();
+
+                    b.Property<long>("RemovedRecordCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("RequestSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nchar(64)")
+                        .IsFixedLength();
+
+                    b.Property<long>("ResultingVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("StartedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("ScopeId", "OperationId");
+
+                    b.HasIndex("ScopeId", "Namespace", "Digest")
+                        .IsUnique();
+
+                    b.ToTable("notification_history_batch_close_operations", "notifications", t =>
+                        {
+                            t.HasCheckConstraint("CK_notification_history_batch_close_operations_batch", "\"BatchSize\" >= 1 AND \"BatchSize\" <= 1000");
+
+                            t.HasCheckConstraint("CK_notification_history_batch_close_operations_progress", "((\"RemovedRecordCount\" = 0 AND \"CompletedBatchCount\" = 0) OR (\"RemovedRecordCount\" > 0 AND \"CompletedBatchCount\" > 0)) AND \"ProofVersion\" = 1 AND \"UpdatedAtUtc\" >= \"StartedAtUtc\"");
+
+                            t.HasCheckConstraint("CK_notification_history_batch_close_operations_versions", "\"ExpectedVersion\" >= 0 AND \"ResultingVersion\" > \"ExpectedVersion\"");
+                        });
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.NotificationHistoryBatchCloseReceipt", b =>
+                {
+                    b.Property<string>("ScopeId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CompletedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<int>("CompletedBatchCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Digest")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nchar(64)")
+                        .IsFixedLength();
+
+                    b.Property<string>("Namespace")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("RemovalProofSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nchar(64)")
+                        .IsFixedLength();
+
+                    b.Property<int>("RemovalProofVersion")
+                        .HasColumnType("int");
+
+                    b.Property<long>("RemovedRecordCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("RequestSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nchar(64)")
+                        .IsFixedLength();
+
+                    b.Property<long>("ResultingVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("StartedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("ScopeId", "OperationId");
+
+                    b.HasIndex("ScopeId", "Namespace", "Digest")
+                        .IsUnique();
+
+                    b.ToTable("notification_history_batch_close_receipts", "notifications", t =>
+                        {
+                            t.HasTrigger("notification_history_batch_close_receipts_append_only");
+
+                            t.HasCheckConstraint("CK_notification_history_batch_close_receipts_progress", "((\"RemovedRecordCount\" = 0 AND \"CompletedBatchCount\" = 0) OR (\"RemovedRecordCount\" > 0 AND \"CompletedBatchCount\" > 0)) AND \"RemovalProofVersion\" = 1 AND \"CompletedAtUtc\" >= \"StartedAtUtc\"");
+
+                            t.HasCheckConstraint("CK_notification_history_batch_close_receipts_version", "\"ResultingVersion\" >= 1");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
             modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.NotificationHistoryCloseReceipt", b =>
                 {
                     b.Property<string>("ScopeId")
                         .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
 
                     b.Property<Guid>("OperationId")
                         .HasColumnType("uniqueidentifier");
@@ -596,17 +746,22 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
 
                     b.ToTable("notification_history_close_receipts", "notifications", t =>
                         {
+                            t.HasTrigger("notification_history_close_receipts_append_only");
+
                             t.HasCheckConstraint("CK_notification_history_close_receipts_count", "\"RemovedRecordCount\" >= 0");
 
                             t.HasCheckConstraint("CK_notification_history_close_receipts_version", "\"ResultingVersion\" >= 1");
                         });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.NotificationHistoryReferenceState", b =>
                 {
                     b.Property<string>("ScopeId")
                         .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
 
                     b.Property<string>("Namespace")
                         .HasMaxLength(64)
@@ -641,15 +796,185 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
 
                     b.ToTable("notification_history_reference_states", "notifications", t =>
                         {
+                            t.HasTrigger("notification_history_reference_states_closed_immutable");
+
+                            t.HasCheckConstraint("CK_notification_history_reference_states_closure", "(CAST(\"IsClosed\" AS integer) = 0 AND \"CloseOperationId\" IS NULL AND \"CloseRequestSha256\" IS NULL AND \"ClosedAtUtc\" IS NULL) OR (CAST(\"IsClosed\" AS integer) = 1 AND \"Version\" >= 1 AND \"CloseOperationId\" IS NOT NULL AND \"CloseRequestSha256\" IS NOT NULL AND \"ClosedAtUtc\" IS NOT NULL)");
+
                             t.HasCheckConstraint("CK_notification_history_reference_states_version", "\"Version\" >= 0");
                         });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.NotificationScopeDestroyOperation", b =>
+                {
+                    b.Property<string>("ScopeId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<int>("BatchSize")
+                        .HasColumnType("int");
+
+                    b.Property<int>("CompletedBatchCount")
+                        .IsConcurrencyToken()
+                        .HasColumnType("int");
+
+                    b.Property<long>("ExpectedRevision")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("ProofVersion")
+                        .HasColumnType("int");
+
+                    b.Property<string>("RemovalProofSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nchar(64)")
+                        .IsFixedLength();
+
+                    b.Property<long>("RemovedRecordCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("RequestSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nchar(64)")
+                        .IsFixedLength();
+
+                    b.Property<long>("ResultingRevision")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Stage")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("StartedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("ScopeId");
+
+                    b.ToTable("notification_scope_destroy_operations", "notifications", t =>
+                        {
+                            t.HasCheckConstraint("CK_notification_scope_destroy_operations_batch", "\"BatchSize\" >= 1 AND \"BatchSize\" <= 1000");
+
+                            t.HasCheckConstraint("CK_notification_scope_destroy_operations_progress", "\"Stage\" >= 1 AND \"Stage\" <= 7 AND ((\"RemovedRecordCount\" = 0 AND \"CompletedBatchCount\" = 0) OR (\"RemovedRecordCount\" > 0 AND \"CompletedBatchCount\" > 0)) AND \"ProofVersion\" = 1 AND \"UpdatedAtUtc\" >= \"StartedAtUtc\"");
+
+                            t.HasCheckConstraint("CK_notification_scope_destroy_operations_revisions", "\"ExpectedRevision\" >= 0 AND \"ResultingRevision\" > \"ExpectedRevision\"");
+                        });
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.NotificationScopeDestroyReceipt", b =>
+                {
+                    b.Property<string>("ScopeId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<int>("BatchSize")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("CompletedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<int>("CompletedBatchCount")
+                        .HasColumnType("int");
+
+                    b.Property<long>("ExpectedRevision")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("RemovalProofSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nchar(64)")
+                        .IsFixedLength();
+
+                    b.Property<int>("RemovalProofVersion")
+                        .HasColumnType("int");
+
+                    b.Property<long>("RemovedRecordCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("RequestSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nchar(64)")
+                        .IsFixedLength();
+
+                    b.Property<long>("ResultingRevision")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("StartedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("ScopeId");
+
+                    b.ToTable("notification_scope_destroy_receipts", "notifications", t =>
+                        {
+                            t.HasTrigger("notification_scope_destroy_receipts_append_only");
+
+                            t.HasCheckConstraint("CK_notification_scope_destroy_receipts_progress", "\"BatchSize\" >= 1 AND \"BatchSize\" <= 1000 AND ((\"RemovedRecordCount\" = 0 AND \"CompletedBatchCount\" = 0) OR (\"RemovedRecordCount\" > 0 AND \"CompletedBatchCount\" > 0)) AND \"RemovalProofVersion\" = 1 AND \"CompletedAtUtc\" >= \"StartedAtUtc\"");
+
+                            t.HasCheckConstraint("CK_notification_scope_destroy_receipts_revisions", "\"ExpectedRevision\" >= 0 AND \"ResultingRevision\" > \"ExpectedRevision\"");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.NotificationScopeState", b =>
+                {
+                    b.Property<string>("ScopeId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<Guid?>("CloseOperationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("CloseRequestSha256")
+                        .HasMaxLength(64)
+                        .HasColumnType("nchar(64)")
+                        .IsFixedLength();
+
+                    b.Property<DateTimeOffset?>("ClosedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<bool>("IsClosed")
+                        .HasColumnType("bit");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ScopeId");
+
+                    b.HasIndex("IsClosed", "ClosedAtUtc", "ScopeId");
+
+                    b.ToTable("notification_scope_states", "notifications", t =>
+                        {
+                            t.HasTrigger("notification_scope_states_closed_immutable");
+
+                            t.HasCheckConstraint("CK_notification_scope_states_closure", "(CAST(\"IsClosed\" AS integer) = 0 AND \"CloseOperationId\" IS NULL AND \"CloseRequestSha256\" IS NULL AND \"ClosedAtUtc\" IS NULL) OR (CAST(\"IsClosed\" AS integer) = 1 AND \"Version\" >= 1 AND \"CloseOperationId\" IS NOT NULL AND \"CloseRequestSha256\" IS NOT NULL AND \"ClosedAtUtc\" IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_notification_scope_states_version", "\"Version\" >= 0");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.UserNotificationReference", b =>
                 {
                     b.Property<string>("ScopeId")
                         .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
 
                     b.Property<Guid>("NotificationId")
                         .HasColumnType("uniqueidentifier");
@@ -676,7 +1001,8 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
                 {
                     b.Property<string>("ScopeId")
                         .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
 
                     b.Property<Guid>("NotificationId")
                         .HasColumnType("uniqueidentifier");
@@ -838,6 +1164,51 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
                         .WithMany()
                         .HasForeignKey("DeliveryId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.NotificationHistoryBatchCloseOperation", b =>
+                {
+                    b.HasOne("Gma.Modules.Notifications.Domain.Entities.NotificationHistoryReferenceState", null)
+                        .WithMany()
+                        .HasForeignKey("ScopeId", "Namespace", "Digest")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.NotificationHistoryBatchCloseReceipt", b =>
+                {
+                    b.HasOne("Gma.Modules.Notifications.Domain.Entities.NotificationHistoryReferenceState", null)
+                        .WithMany()
+                        .HasForeignKey("ScopeId", "Namespace", "Digest")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.NotificationHistoryCloseReceipt", b =>
+                {
+                    b.HasOne("Gma.Modules.Notifications.Domain.Entities.NotificationHistoryReferenceState", null)
+                        .WithMany()
+                        .HasForeignKey("ScopeId", "Namespace", "Digest")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.NotificationScopeDestroyOperation", b =>
+                {
+                    b.HasOne("Gma.Modules.Notifications.Domain.Entities.NotificationScopeState", null)
+                        .WithMany()
+                        .HasForeignKey("ScopeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Gma.Modules.Notifications.Domain.Entities.NotificationScopeDestroyReceipt", b =>
+                {
+                    b.HasOne("Gma.Modules.Notifications.Domain.Entities.NotificationScopeState", null)
+                        .WithMany()
+                        .HasForeignKey("ScopeId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

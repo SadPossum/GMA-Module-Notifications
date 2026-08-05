@@ -309,6 +309,170 @@ public sealed class NotificationHistoryLifecycleTests
     }
 
     [Fact]
+    public async Task Batch_close_resumes_with_bounded_progress_and_exact_replay()
+    {
+        await using NotificationsDbContext dbContext = CreateDbContext();
+        NotificationHistoryReference subject = Reference(
+            "product-subject",
+            "product-subject/v1|tenant-a|record-42");
+        NotificationHistoryReference companion = Reference(
+            "related-resource",
+            "related-resource/v1|tenant-a|record-7");
+        NotificationHistoryLifecycleRepository repository = new(dbContext);
+        UserNotification first = CreateNotification(
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            "user-a",
+            [ToDomain(subject), ToDomain(companion)],
+            1);
+        UserNotification second = CreateNotification(
+            Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            "user-a",
+            [ToDomain(subject)],
+            2);
+        UserNotification third = CreateNotification(
+            Guid.Parse("33333333-3333-3333-3333-333333333333"),
+            "user-a",
+            [ToDomain(subject)],
+            3);
+        foreach (UserNotification notification in
+                 new[] { first, second, third })
+        {
+            Assert.True(await repository.RegisterAsync(
+                notification,
+                CancellationToken.None));
+        }
+
+        dbContext.UserNotifications.AddRange(first, second, third);
+        await dbContext.SaveChangesAsync();
+
+        NotificationHistoryLifecycleService lifecycle =
+            new(dbContext, new TestScopeContext(), new FixedClock());
+        NotificationHistoryReferenceSnapshot selected =
+            await lifecycle.GetSnapshotAsync(
+                "tenant-a",
+                subject,
+                CancellationToken.None);
+        NotificationHistoryReferenceCloseBatchRequest request = new(
+            Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            "tenant-a",
+            subject,
+            selected.Version,
+            BatchSize: 2);
+
+        NotificationHistoryReferenceCloseBatchResult firstBatch =
+            await lifecycle.CloseBatchAsync(
+                request,
+                CancellationToken.None);
+
+        Assert.Equal(
+            NotificationHistoryReferenceCloseBatchStatus.InProgress,
+            firstBatch.Status);
+        Assert.Equal(2, firstBatch.Progress!.RemovedRecordCount);
+        Assert.Equal(1, firstBatch.Progress.CompletedBatchCount);
+        Assert.Single(await dbContext.UserNotifications.ToArrayAsync());
+        Assert.Single(
+            await dbContext.NotificationHistoryBatchCloseOperations
+                .ToArrayAsync());
+        Assert.Empty(
+            await dbContext.NotificationHistoryBatchCloseReceipts
+                .ToArrayAsync());
+
+        UserNotification late = CreateNotification(
+            Guid.Parse("44444444-4444-4444-4444-444444444444"),
+            "user-a",
+            [ToDomain(subject)],
+            4);
+        Assert.False(await repository.RegisterAsync(
+            late,
+            CancellationToken.None));
+
+        NotificationHistoryReferenceCloseBatchResult completed =
+            await lifecycle.CloseBatchAsync(
+                request,
+                CancellationToken.None);
+        NotificationHistoryReferenceCloseBatchResult replayed =
+            await lifecycle.CloseBatchAsync(
+                request,
+                CancellationToken.None);
+        NotificationHistoryReferenceCloseBatchResult changedReplay =
+            await lifecycle.CloseBatchAsync(
+                request with { BatchSize = 1 },
+                CancellationToken.None);
+
+        Assert.Equal(
+            NotificationHistoryReferenceCloseBatchStatus.Completed,
+            completed.Status);
+        Assert.Equal(3, completed.Receipt!.RemovedRecordCount);
+        Assert.Equal(2, completed.Receipt.CompletedBatchCount);
+        Assert.Equal(
+            NotificationHistoryReferenceCloseBatchStatus.Replayed,
+            replayed.Status);
+        Assert.Equal(completed.Receipt, replayed.Receipt);
+        Assert.Equal(
+            NotificationHistoryReferenceCloseBatchStatus.Conflict,
+            changedReplay.Status);
+        Assert.Empty(await dbContext.UserNotifications.ToArrayAsync());
+        Assert.Empty(
+            await dbContext.NotificationHistoryBatchCloseOperations
+                .ToArrayAsync());
+        Assert.Single(
+            await dbContext.NotificationHistoryBatchCloseReceipts
+                .ToArrayAsync());
+
+        NotificationHistoryReferenceSnapshot closed =
+            await lifecycle.GetSnapshotAsync(
+                "tenant-a",
+                subject,
+                CancellationToken.None);
+        NotificationHistoryReferenceSnapshot companionAfterClose =
+            await lifecycle.GetSnapshotAsync(
+                "tenant-a",
+                companion,
+                CancellationToken.None);
+        Assert.Equal(NotificationHistoryReferenceStatus.Closed, closed.Status);
+        Assert.Equal(0, closed.RecordCount);
+        Assert.Equal(2, companionAfterClose.Version);
+        Assert.Equal(0, companionAfterClose.RecordCount);
+    }
+
+    [Fact]
+    public async Task Batch_close_of_missing_history_installs_terminal_tombstone()
+    {
+        await using NotificationsDbContext dbContext = CreateDbContext();
+        NotificationHistoryReference reference = Reference(
+            "product-subject",
+            "product-subject/v1|tenant-a|missing");
+        NotificationHistoryLifecycleService lifecycle =
+            new(dbContext, new TestScopeContext(), new FixedClock());
+
+        NotificationHistoryReferenceCloseBatchResult result =
+            await lifecycle.CloseBatchAsync(
+                new NotificationHistoryReferenceCloseBatchRequest(
+                    Guid.Parse(
+                        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                    "tenant-a",
+                    reference,
+                    ExpectedVersion: 0,
+                    BatchSize: 100),
+                CancellationToken.None);
+
+        Assert.Equal(
+            NotificationHistoryReferenceCloseBatchStatus.Completed,
+            result.Status);
+        Assert.Equal(0, result.Receipt!.RemovedRecordCount);
+        Assert.Equal(0, result.Receipt.CompletedBatchCount);
+        Assert.Equal(
+            NotificationHistoryBatchCloseOperation.InitialRemovalProofSha256,
+            result.Receipt.RemovalProofSha256);
+        Assert.Equal(
+            NotificationHistoryReferenceStatus.Closed,
+            (await lifecycle.GetSnapshotAsync(
+                "tenant-a",
+                reference,
+                CancellationToken.None)).Status);
+    }
+
+    [Fact]
     public async Task Reads_hide_a_missing_reference_without_querying_state()
     {
         await using NotificationsDbContext dbContext = CreateDbContext();

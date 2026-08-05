@@ -239,6 +239,92 @@ public sealed class NotificationDeliveryServiceTests
         Assert.Equal(Now.AddSeconds(1).AddMinutes(30), stored.NextAttemptAtUtc);
     }
 
+    [Fact]
+    public async Task Durable_worker_does_not_claim_a_closed_scope()
+    {
+        InMemoryDatabaseRoot databaseRoot = new();
+        string databaseName = $"delivery-worker-closed-{Guid.NewGuid():N}";
+        ServiceCollection services = new();
+        services.AddMetrics();
+        services.AddSingleton<IScopeContext>(new DisabledScopeContext());
+        services.AddDbContext<NotificationsDbContext>(options =>
+            options.UseInMemoryDatabase(databaseName, databaseRoot));
+        await using ServiceProvider serviceProvider =
+            services.BuildServiceProvider();
+        Guid notificationId = Guid.CreateVersion7();
+        Guid deliveryId = Guid.CreateVersion7();
+
+        await using (AsyncServiceScope seedScope =
+                     serviceProvider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext = seedScope.ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            dbContext.UserNotifications.Add(UserNotification.Create(
+                notificationId,
+                "tenant-a",
+                "user-a",
+                "auth",
+                "auth.account-accessed",
+                1,
+                "New sign-in",
+                null,
+                DomainSeverity.Warning,
+                Now,
+                Now,
+                "{}").Value);
+            dbContext.NotificationDeliveries.Add(
+                NotificationDelivery.CreatePending(
+                    deliveryId,
+                    "tenant-a",
+                    notificationId,
+                    NotificationTags.Email,
+                    TestDurableSink.Provider,
+                    Now).Value);
+            await dbContext.SaveChangesAsync();
+            NotificationScopeState state =
+                await dbContext.NotificationScopeStates.SingleAsync();
+            Assert.Equal(
+                NotificationScopeCloseTransition.Completed,
+                state.Close(
+                    Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                    new string('a', 64),
+                    Now.AddSeconds(1)));
+            await dbContext.SaveChangesAsync();
+        }
+
+        NotificationDeliveryMetrics metrics = new(
+            serviceProvider
+                .GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(),
+            Options.Create(new ApplicationIdentityOptions
+            {
+                Namespace = "notification-tests"
+            }));
+        NotificationDeliveryService worker = new(
+            serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            new NotificationDeliveryAdapterCatalog([new TestDurableSink()]),
+            new FixedClock(Now.AddSeconds(2)),
+            new TestIdGenerator(),
+            Options.Create(new NotificationDeliveryOptions
+            {
+                WorkerId = "notification-test-worker",
+                LeaseSeconds = 60
+            }),
+            metrics,
+            NullLogger<NotificationDeliveryService>.Instance);
+
+        Guid[] claimed = await worker.ClaimAsync(1, CancellationToken.None);
+
+        Assert.Empty(claimed);
+        await using AsyncServiceScope assertionScope =
+            serviceProvider.CreateAsyncScope();
+        NotificationDelivery stored = await assertionScope.ServiceProvider
+            .GetRequiredService<NotificationsDbContext>()
+            .NotificationDeliveries
+            .IgnoreQueryFilters()
+            .SingleAsync();
+        Assert.Equal(DomainDeliveryStatus.Pending, stored.Status);
+    }
+
     private sealed class TestDurableSink : IUserNotificationSink
     {
         public const string Provider = "test-email";
@@ -299,5 +385,11 @@ public sealed class NotificationDeliveryServiceTests
         public bool HasScope => !string.IsNullOrWhiteSpace(scopeId);
         public string? ScopeId => scopeId;
         public string RequireScopeId() => scopeId;
+    }
+
+    private sealed class DisabledScopeContext : IScopeContext
+    {
+        public bool IsEnabled => false;
+        public string? ScopeId => null;
     }
 }

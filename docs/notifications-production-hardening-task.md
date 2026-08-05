@@ -81,3 +81,13 @@ Make the optional Notifications module production-ready for durable addressed no
 - Skeleton head `adcf09e` records the hardened Notifications and Extensions heads, keeps relational internals module-owned, passes exact submodule-head and source-package guards, and passes Windows/Linux full verification;
 - BunkFy backend head `ce295c9` requires current workspace owner/member assignment for notification access, configures durable-stream heartbeats, includes the module-owned relational project, passes exact submodule-head and source-package guards, and passes Windows/Linux full verification plus 32 Docker integration tests;
 - no framework code or product-specific rule moved into Notifications: generic primitives remain in Framework, Auth mapping remains in Extensions, workspace authorization remains in BunkFy, and provider/deployment policy remains host-owned.
+
+## 2026-08-05 Ordinal Scope Storage Revalidation
+
+- Notifications inherits Framework's ordinal `ScopeId` convention for filtered
+  aggregates and unfiltered lifecycle or messaging records.
+- Its SQL Server migration rebuilds exactly 24 affected indexes, 9 primary keys,
+  and 6 foreign keys around the collation change; PostgreSQL remains unchanged.
+- All 115 fast tests and both migration-drift checks pass, and the focused SQL
+  Server lifecycle scenario applies the complete migration chain and exercises
+  the rebuilt lifecycle relationships.

@@ -27,6 +27,7 @@
   <Folder Name="/docs/">
     <File Path="docs/README.md" />
     <File Path="docs/notification-history-lifecycle-task.md" />
+    <File Path="docs/notification-lifecycle-scaling-task.md" />
     <File Path="docs/notifications-production-hardening-task.md" />
   </Folder>
   <Folder Name="/eng/">
@@ -39,6 +40,7 @@
   <Folder Name="/src/Admin/">
     <Project Path="src/Gma.Modules.Notifications.Admin.Contracts/Gma.Modules.Notifications.Admin.Contracts.csproj" />
     <Project Path="src/Gma.Modules.Notifications.AdminApi/Gma.Modules.Notifications.AdminApi.csproj" />
+    <Project Path="src/Gma.Modules.Notifications.AdminCli/Gma.Modules.Notifications.AdminCli.csproj" />
   </Folder>
   <Folder Name="/src/Api/">
     <Project Path="src/Gma.Modules.Notifications.Api/Gma.Modules.Notifications.Api.csproj" />

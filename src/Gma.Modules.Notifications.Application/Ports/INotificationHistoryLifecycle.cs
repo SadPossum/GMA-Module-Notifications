@@ -25,6 +25,10 @@ public interface INotificationHistoryLifecycle
     Task<NotificationHistoryReferenceCloseResult> CloseAsync(
         NotificationHistoryReferenceCloseRequest request,
         CancellationToken cancellationToken);
+
+    Task<NotificationHistoryReferenceCloseBatchResult> CloseBatchAsync(
+        NotificationHistoryReferenceCloseBatchRequest request,
+        CancellationToken cancellationToken);
 }
 
 public sealed record NotificationHistoryReferenceSnapshot(
@@ -98,4 +102,51 @@ public static class NotificationHistoryLifecycleLimits
 {
     public const int MaximumPageSize = 200;
     public const int MaximumCloseRecords = 10_000;
+    public const int MaximumCloseBatchSize = 1_000;
 }
+
+public sealed record NotificationHistoryReferenceCloseBatchRequest(
+    Guid OperationId,
+    string ScopeId,
+    NotificationHistoryReference Reference,
+    long ExpectedVersion,
+    int BatchSize);
+
+public sealed record NotificationHistoryReferenceCloseBatchResult(
+    NotificationHistoryReferenceCloseBatchStatus Status,
+    NotificationHistoryReferenceCloseBatchProgress? Progress,
+    NotificationHistoryReferenceCloseBatchReceipt? Receipt);
+
+public enum NotificationHistoryReferenceCloseBatchStatus
+{
+    Invalid = 0,
+    InProgress = 1,
+    Completed = 2,
+    Replayed = 3,
+    Stale = 4,
+    Busy = 5,
+    Conflict = 6,
+    ScopeUnavailable = 7
+}
+
+public sealed record NotificationHistoryReferenceCloseBatchProgress(
+    Guid OperationId,
+    NotificationHistoryReference Reference,
+    long ResultingVersion,
+    long RemovedRecordCount,
+    int CompletedBatchCount,
+    int RemovalProofVersion,
+    string RemovalProofSha256,
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset UpdatedAtUtc);
+
+public sealed record NotificationHistoryReferenceCloseBatchReceipt(
+    Guid OperationId,
+    NotificationHistoryReference Reference,
+    long ResultingVersion,
+    long RemovedRecordCount,
+    int CompletedBatchCount,
+    int RemovalProofVersion,
+    string RemovalProofSha256,
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset CompletedAtUtc);

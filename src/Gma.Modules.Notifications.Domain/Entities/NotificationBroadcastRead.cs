@@ -13,9 +13,8 @@ public sealed class NotificationBroadcastRead : Entity<Guid>
 {
     public const int RecipientIdMaxLength = UserNotification.UserIdMaxLength;
     public const string GlobalRecipientScope = "global";
+    public const string TenantRecipientScopePrefix = "tenant:";
     public const int RecipientScopeMaxLength = ScopeIds.MaxLength + 7;
-
-    private const string TenantRecipientScopePrefix = "tenant:";
 
     private NotificationBroadcastRead() { }
 
@@ -87,6 +86,20 @@ public sealed class NotificationBroadcastRead : Entity<Guid>
         return ScopeIds.TryNormalize(scopeId, out string? normalizedScopeId)
             ? Result.Success(TenantRecipientScopePrefix + normalizedScopeId)
             : Result.Failure<string>(NotificationsDomainErrors.TenantInvalid);
+    }
+
+    public bool TryGetTenantScopeId(out string? scopeId)
+    {
+        scopeId = null;
+        if (!this.RecipientScope.StartsWith(
+                TenantRecipientScopePrefix,
+                StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        string candidate = this.RecipientScope[TenantRecipientScopePrefix.Length..];
+        return ScopeIds.TryNormalize(candidate, out scopeId);
     }
 
     private static bool IsValidRecipientKind(NotificationBroadcastRecipientKind recipientKind) =>
