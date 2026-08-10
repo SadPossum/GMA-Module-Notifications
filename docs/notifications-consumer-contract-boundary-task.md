@@ -1,6 +1,6 @@
 # Notifications Consumer Contract Boundary Task
 
-Status: in progress
+Status: completed
 Date: 2026-08-10
 
 ## Goal
@@ -82,8 +82,8 @@ redesign in this slice.
   architecture guard.
 - [x] Move BunkFy Operations Notifications to Contracts only and add a scoped
   architecture guard.
-- [ ] Update canonical Skeleton and product pins after focused verification.
-- [ ] Run one consolidated non-Docker gate per changed repository at the
+- [x] Update canonical Skeleton and product pins after focused verification.
+- [x] Run one consolidated non-Docker gate per changed repository at the
   completed slice boundary, publish exact pins, and verify exact CI.
 
 ## Verification Plan
@@ -97,6 +97,44 @@ redesign in this slice.
 - At the coherent slice boundary, run the complete non-Docker Notifications,
   GMA Extensions, Skeleton, and BunkFy backend gates once, plus the BunkFy root
   lightweight gate before publication.
+
+## Verification Evidence
+
+- Notifications functional commit
+  `9f0559464b9a39c01c90ecc2549be08443223551`: synchronized solution,
+  boundary checks, zero-warning build, PostgreSQL and SQL Server migration
+  drift checks, 117 non-Docker tests, and package audit passed. Exact CI passed
+  in Validate run `31358839357` and Security Baseline run `31358839346`.
+  Documentation-index follow-up `87a98eb56324efde65d3d5a1906b3eb6bc92cf49`
+  also passed Validate run `31359665405` and Security Baseline run
+  `31359665384`.
+- GMA Extensions functional commits
+  `4628192fb58bb576d31bde4f4040a15643dd826a` and
+  `4090189954ae42768e65b4c7533ea28860f19ab0`: explicit Runtime ownership,
+  solution synchronization, extension-boundary checks, zero-warning build,
+  all 37 tests, and package audit passed. Exact final-commit CI passed in
+  Validate run `31359274164` and Security Baseline run `31359274200`.
+- Canonical Skeleton pin commit
+  `119a14b5cf6c91b0c05869b73eada2121b18a3a5`: all mounted solutions,
+  selection matrices, security/release/source-package checks, zero-warning
+  build, migration drift checks, and non-Docker tests passed. Exact CI passed
+  in Validate run `31359984569`, Security Baseline run `31359984565`, and
+  CodeQL run `31359984527`.
+- BunkFy backend functional commit
+  `97b349310e04520d753246f0037f235df22e7a57`: complete non-Docker backend
+  verification passed, including the Operations Notifications suite,
+  architecture, Worker composition, integration, migration drift, and package
+  coverage. Exact CI passed in Validate run `31360629397` and Security Baseline
+  run `31360629445`.
+- BunkFy root pin commit
+  `5ec8eb7adcda71c0c1f7075661a24414abecc00a`: the lightweight root
+  composition, admission, release, and deployed-probe policy gate passed.
+  Exact CI passed in Validate run `31360823044`, Security Baseline run
+  `31360823040`, and CodeQL run `31360823002`.
+- Local Docker was intentionally omitted because the slice did not change a
+  persistence model, migration, generated SQL shape, transaction boundary,
+  provider mapping, or query behavior. Notifications CI still exercised its
+  relational integration job on the exact functional commit.
 
 ## Not In This Slice
 
