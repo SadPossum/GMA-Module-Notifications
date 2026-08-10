@@ -10,6 +10,8 @@ Durable worker-loss and operator-retry correctness is tracked in
 [Notification Delivery Recovery Task](notification-delivery-recovery-task.md).
 Long-lived durable stream authorization is tracked in
 [Notification Stream Access Lease Task](notification-stream-access-lease-task.md).
+Explicit database-default semantics are recorded in
+[Notification Enum Default Sentinel Task](notification-enum-default-sentinel-task.md).
 
 The optional Notifications module owns durable, addressed user notifications. It stores inbox history and read state, persists a tenant-scoped tag catalog and user preferences, plans durable adapter deliveries, records immutable attempts/receipts, and exposes user and operator APIs. It also owns durable audience broadcasts.
 

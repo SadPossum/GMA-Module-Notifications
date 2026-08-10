@@ -27,6 +27,7 @@
   <Folder Name="/docs/">
     <File Path="docs/README.md" />
     <File Path="docs/notification-delivery-recovery-task.md" />
+    <File Path="docs/notification-enum-default-sentinel-task.md" />
     <File Path="docs/notification-history-lifecycle-task.md" />
     <File Path="docs/notification-lifecycle-scaling-task.md" />
     <File Path="docs/notification-stream-access-lease-task.md" />

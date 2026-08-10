@@ -65,6 +65,7 @@ internal sealed class UserNotificationConfiguration : IEntityTypeConfiguration<U
                 value => NotificationRoutingSemanticNames.ParseDeliveryPolicy(value))
             .HasMaxLength(NotificationRoutingSemanticNames.MaxLength)
             .HasDefaultValue(NotificationDeliveryPolicy.RespectPreferences)
+            .HasSentinel(default)
             .IsRequired();
         builder.Property(notification => notification.IsInboxVisible)
             .HasDefaultValue(true)
