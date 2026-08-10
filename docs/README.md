@@ -4,6 +4,8 @@ Production hardening work is tracked in [Notifications Production Hardening Task
 The reusable reference lifecycle is specified in [Notification History Lifecycle Task](notification-history-lifecycle-task.md).
 Large-history and generic scope closure are tracked in
 [Notification Lifecycle Scaling Task](notification-lifecycle-scaling-task.md).
+Consumer-facing lifecycle and projector boundaries are tracked in
+[Notifications Consumer Contract Boundary Task](notifications-consumer-contract-boundary-task.md).
 
 The optional Notifications module owns durable, addressed user notifications. It stores inbox history and read state, persists a tenant-scoped tag catalog and user preferences, plans durable adapter deliveries, records immutable attempts/receipts, and exposes user and operator APIs. It also owns durable audience broadcasts.
 
