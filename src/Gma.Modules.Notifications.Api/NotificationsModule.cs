@@ -20,8 +20,9 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Timeouts;
 using Microsoft.AspNetCore.Routing;
-using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -227,6 +228,7 @@ public sealed class NotificationsModule : IModule
             INotificationStreamPulse streamPulse,
             ILogger<NotificationsModule> logger,
             IOptions<NotificationStreamOptions> streamOptions,
+            INotificationUserScopeAuthorizer userScopeAuthorizer,
             CancellationToken cancellationToken) =>
         {
             if (!TryResolveUserContext(httpContext, out AccessSubject subject, out IResult? failure))
@@ -264,6 +266,11 @@ public sealed class NotificationsModule : IModule
                 cursor = cursorResult.Value;
             }
 
+            NotificationStreamOptions options = streamOptions.Value;
+            NotificationStreamAccessLease accessLease = NotificationStreamAccessLease.Create(
+                options,
+                httpContext.User,
+                ResolveTimeProvider(httpContext));
             IResult stream = TypedResults.ServerSentEvents(
                 StreamBroadcastsAsync(
                     dispatcher,
@@ -271,7 +278,13 @@ public sealed class NotificationsModule : IModule
                     NotificationBroadcastRecipientKind.User,
                     subject.Id,
                     cursor,
-                    streamOptions.Value,
+                    options,
+                    accessLease,
+                    token => userScopeAuthorizer.AuthorizeAsync(
+                        httpContext.User,
+                        subject,
+                        scopeContext,
+                        token),
                     streamPulse,
                     logger,
                     httpContext.RequestAborted));
@@ -351,6 +364,7 @@ public sealed class NotificationsModule : IModule
             INotificationStreamPulse streamPulse,
             ILogger<NotificationsModule> logger,
             IOptions<NotificationStreamOptions> streamOptions,
+            INotificationUserScopeAuthorizer userScopeAuthorizer,
             CancellationToken cancellationToken) =>
         {
             if (!TryResolveUserContext(httpContext, out AccessSubject subject, out IResult? failure))
@@ -386,13 +400,24 @@ public sealed class NotificationsModule : IModule
                 cursor = cursorResult.Value;
             }
 
+            NotificationStreamOptions options = streamOptions.Value;
+            NotificationStreamAccessLease accessLease = NotificationStreamAccessLease.Create(
+                options,
+                httpContext.User,
+                ResolveTimeProvider(httpContext));
             IResult stream = TypedResults.ServerSentEvents(
                 StreamUserHistoryAsync(
                     dispatcher,
                     subject,
                     CurrentScopeId(scopeContext),
                     cursor,
-                    streamOptions.Value,
+                    options,
+                    accessLease,
+                    token => userScopeAuthorizer.AuthorizeAsync(
+                        httpContext.User,
+                        subject,
+                        scopeContext,
+                        token),
                     streamPulse,
                     logger,
                     httpContext.RequestAborted));
@@ -428,6 +453,8 @@ public sealed class NotificationsModule : IModule
         string? scopeId,
         long initialCursor,
         NotificationStreamOptions options,
+        NotificationStreamAccessLease accessLease,
+        Func<CancellationToken, Task<bool>> authorize,
         INotificationStreamPulse streamPulse,
         ILogger logger,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
@@ -436,6 +463,16 @@ public sealed class NotificationsModule : IModule
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            if (!await CanContinueStreamAsync(
+                    accessLease,
+                    authorize,
+                    logger,
+                    "history",
+                    cancellationToken).ConfigureAwait(false))
+            {
+                yield break;
+            }
+
             long observedVersion = streamPulse.CaptureVersion(NotificationStreamKind.History);
             Result<IReadOnlyList<NotificationHistoryItem>> result = await dispatcher.QueryAsync(
                 new StreamNotificationHistoryQuery(subject, scopeId, afterSequence, options.BatchSize),
@@ -461,11 +498,21 @@ public sealed class NotificationsModule : IModule
             bool changed = await streamPulse.WaitForChangeAsync(
                     NotificationStreamKind.History,
                     observedVersion,
-                    options.HeartbeatInterval,
+                    accessLease.LimitWaitInterval(options.HeartbeatInterval),
                     cancellationToken)
                 .ConfigureAwait(false);
             if (!changed)
             {
+                if (!await CanContinueStreamAsync(
+                        accessLease,
+                        authorize,
+                        logger,
+                        "history",
+                        cancellationToken).ConfigureAwait(false))
+                {
+                    yield break;
+                }
+
                 yield return new SseItem<object?>(null, "heartbeat");
             }
         }
@@ -478,6 +525,8 @@ public sealed class NotificationsModule : IModule
         string recipientId,
         long initialCursor,
         NotificationStreamOptions options,
+        NotificationStreamAccessLease accessLease,
+        Func<CancellationToken, Task<bool>> authorize,
         INotificationStreamPulse streamPulse,
         ILogger logger,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
@@ -486,6 +535,16 @@ public sealed class NotificationsModule : IModule
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            if (!await CanContinueStreamAsync(
+                    accessLease,
+                    authorize,
+                    logger,
+                    "broadcast",
+                    cancellationToken).ConfigureAwait(false))
+            {
+                yield break;
+            }
+
             long observedVersion = streamPulse.CaptureVersion(NotificationStreamKind.Broadcasts);
             Result<IReadOnlyList<NotificationBroadcastItem>> result = await dispatcher.QueryAsync(
                 new StreamNotificationBroadcastsQuery(
@@ -516,13 +575,60 @@ public sealed class NotificationsModule : IModule
             bool changed = await streamPulse.WaitForChangeAsync(
                     NotificationStreamKind.Broadcasts,
                     observedVersion,
-                    options.HeartbeatInterval,
+                    accessLease.LimitWaitInterval(options.HeartbeatInterval),
                     cancellationToken)
                 .ConfigureAwait(false);
             if (!changed)
             {
+                if (!await CanContinueStreamAsync(
+                        accessLease,
+                        authorize,
+                        logger,
+                        "broadcast",
+                        cancellationToken).ConfigureAwait(false))
+                {
+                    yield break;
+                }
+
                 yield return new SseItem<object?>(null, "heartbeat");
             }
+        }
+    }
+
+    private static async Task<bool> CanContinueStreamAsync(
+        NotificationStreamAccessLease accessLease,
+        Func<CancellationToken, Task<bool>> authorize,
+        ILogger logger,
+        string streamName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            NotificationStreamAccessOutcome outcome = await accessLease
+                .EvaluateAsync(authorize, cancellationToken)
+                .ConfigureAwait(false);
+            if (outcome == NotificationStreamAccessOutcome.Active)
+            {
+                return true;
+            }
+
+            logger.LogDebug(
+                "Notification {StreamName} stream access lease ended with {AccessOutcome}.",
+                streamName,
+                outcome);
+            return false;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Notification {StreamName} stream access revalidation failed with {ExceptionType}; the stream will be closed.",
+                streamName,
+                exception.GetType().Name);
+            return false;
         }
     }
 
@@ -549,6 +655,9 @@ public sealed class NotificationsModule : IModule
 
     private static string RequiredScopeId(IScopeContext scopeContext) =>
         scopeContext.ScopeId ?? string.Empty;
+
+    private static TimeProvider ResolveTimeProvider(HttpContext httpContext) =>
+        httpContext.RequestServices.GetService<TimeProvider>() ?? TimeProvider.System;
 
     private static void LogStreamQueryFailure(ILogger logger, string streamName, Error error)
     {

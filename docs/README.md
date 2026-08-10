@@ -8,6 +8,8 @@ Consumer-facing lifecycle and projector boundaries are tracked in
 [Notifications Consumer Contract Boundary Task](notifications-consumer-contract-boundary-task.md).
 Durable worker-loss and operator-retry correctness is tracked in
 [Notification Delivery Recovery Task](notification-delivery-recovery-task.md).
+Long-lived durable stream authorization is tracked in
+[Notification Stream Access Lease Task](notification-stream-access-lease-task.md).
 
 The optional Notifications module owns durable, addressed user notifications. It stores inbox history and read state, persists a tenant-scoped tag catalog and user preferences, plans durable adapter deliveries, records immutable attempts/receipts, and exposes user and operator APIs. It also owns durable audience broadcasts.
 
@@ -223,6 +225,15 @@ Durable SSE streams use one database sequence-head monitor per process, rather t
 
 `Notifications:DurableStreams:MonitorEnabled` defaults to `true`. Hosts that start the API only for metadata generation or another database-independent task may set it to `false`; stream endpoints and heartbeat fallback remain available, but connected clients detect new rows only on the heartbeat interval. Production serving processes should keep the monitor enabled.
 
+Each durable stream also has a bounded access lease. The user API periodically
+rechecks the host-provided `INotificationUserScopeAuthorizer`; the admin API
+rechecks its original permission through `IAdminAuthorizationService` without
+emitting another operation audit. The stream closes when access is denied, the
+JWT `exp` claim is reached, or `MaximumConnectionLifetime` elapses. The default
+one-minute revalidation cadence creates at most one authorization check per
+active connection per minute, while the process-wide sequence monitor remains
+the only idle notification-data poller.
+
 ## Admin API
 
 Admin endpoints use the shared audited executor and scoped RBAC permissions.
@@ -300,7 +311,9 @@ Notification titles, bodies, payload JSON, recipient ids, delivery destinations 
       "MonitorEnabled": true,
       "BatchSize": 25,
       "PollInterval": "00:00:01",
-      "HeartbeatInterval": "00:00:15"
+      "HeartbeatInterval": "00:00:15",
+      "AuthorizationRevalidationInterval": "00:01:00",
+      "MaximumConnectionLifetime": "00:15:00"
     }
   }
 }

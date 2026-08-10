@@ -29,6 +29,7 @@
     <File Path="docs/notification-delivery-recovery-task.md" />
     <File Path="docs/notification-history-lifecycle-task.md" />
     <File Path="docs/notification-lifecycle-scaling-task.md" />
+    <File Path="docs/notification-stream-access-lease-task.md" />
     <File Path="docs/notifications-consumer-contract-boundary-task.md" />
     <File Path="docs/notifications-production-hardening-task.md" />
   </Folder>

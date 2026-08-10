@@ -20,6 +20,7 @@ using Gma.Modules.Notifications.Persistence;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -391,6 +392,7 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
             long? afterSequence,
             HttpContext httpContext,
             AdminApiExecutor executor,
+            IAdminAuthorizationService authorization,
             IAdminActorContext actorContext,
             IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
@@ -398,9 +400,13 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
             ILogger<NotificationsAdminApiModule> logger,
             IOptions<NotificationStreamOptions> streamOptions,
             CancellationToken cancellationToken) =>
-            await executor.ExecuteAsync(
+        {
+            AdminOperation operation = AdminOperation.Create(
+                NotificationsAdminOperationNames.BroadcastsInboxStream,
+                NotificationsAdminPermissions.BroadcastsRead);
+            return await executor.ExecuteAsync(
                 httpContext,
-                AdminOperation.Create(NotificationsAdminOperationNames.BroadcastsInboxStream, NotificationsAdminPermissions.BroadcastsRead),
+                operation,
                 requireTenant: true,
                 async token =>
                 {
@@ -410,7 +416,8 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
                     }
 
                     string scopeId = RequiredScopeId(scopeContext);
-                    string actorId = RequiredActorId(actorContext);
+                    AdminActor actor = RequiredActor(actorContext);
+                    string actorId = actor.Id;
                     long cursor;
                     if (afterSequence.HasValue)
                     {
@@ -432,6 +439,11 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
                         cursor = cursorResult.Value;
                     }
 
+                    NotificationStreamOptions options = streamOptions.Value;
+                    NotificationStreamAccessLease accessLease = NotificationStreamAccessLease.Create(
+                        options,
+                        httpContext.User,
+                        ResolveTimeProvider(httpContext));
                     return Result.Success<IResult>(TypedResults.ServerSentEvents(
                         StreamBroadcastsAsync(
                             dispatcher,
@@ -439,27 +451,42 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
                             NotificationBroadcastRecipientKind.Admin,
                             actorId,
                             cursor,
-                            streamOptions.Value,
+                            options,
+                            accessLease,
+                            token => IsAdminAuthorizedAsync(
+                                authorization,
+                                actor,
+                                operation,
+                                scopeId,
+                                token),
                             streamPulse,
                             logger,
                             httpContext.RequestAborted)));
                 },
                 cancellationToken,
-                onSuccess: result => result).ConfigureAwait(false));
+                onSuccess: result => result).ConfigureAwait(false);
+        });
 
         history.MapGet("/history/stream", async (
             long? afterSequence,
             string? userId,
             HttpContext httpContext,
             AdminApiExecutor executor,
+            IAdminAuthorizationService authorization,
+            IAdminActorContext actorContext,
+            IScopeContext scopeContext,
             IRequestDispatcher dispatcher,
             INotificationStreamPulse streamPulse,
             ILogger<NotificationsAdminApiModule> logger,
             IOptions<NotificationStreamOptions> streamOptions,
             CancellationToken cancellationToken) =>
-            await executor.ExecuteAsync(
+        {
+            AdminOperation operation = AdminOperation.Create(
+                NotificationsAdminOperationNames.HistoryStream,
+                NotificationsAdminPermissions.HistoryRead);
+            return await executor.ExecuteAsync(
                 httpContext,
-                AdminOperation.Create(NotificationsAdminOperationNames.HistoryStream, NotificationsAdminPermissions.HistoryRead),
+                operation,
                 requireTenant: true,
                 async token =>
                 {
@@ -487,18 +514,33 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
                         cursor = cursorResult.Value;
                     }
 
+                    string scopeId = RequiredScopeId(scopeContext);
+                    AdminActor actor = RequiredActor(actorContext);
+                    NotificationStreamOptions options = streamOptions.Value;
+                    NotificationStreamAccessLease accessLease = NotificationStreamAccessLease.Create(
+                        options,
+                        httpContext.User,
+                        ResolveTimeProvider(httpContext));
                     return Result.Success<IResult>(TypedResults.ServerSentEvents(
                         StreamTenantHistoryAsync(
                             dispatcher,
                             userId,
                             cursor,
-                            streamOptions.Value,
+                            options,
+                            accessLease,
+                            token => IsAdminAuthorizedAsync(
+                                authorization,
+                                actor,
+                                operation,
+                                scopeId,
+                                token),
                             streamPulse,
                             logger,
                             httpContext.RequestAborted)));
                 },
                 cancellationToken,
-                onSuccess: result => result).ConfigureAwait(false));
+                onSuccess: result => result).ConfigureAwait(false);
+        });
     }
 
     private static Task<Result<long>> ResolveCurrentTenantCursorAsync(
@@ -524,6 +566,8 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
         string? userId,
         long initialCursor,
         NotificationStreamOptions options,
+        NotificationStreamAccessLease accessLease,
+        Func<CancellationToken, Task<bool>> authorize,
         INotificationStreamPulse streamPulse,
         ILogger logger,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
@@ -532,6 +576,16 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            if (!await CanContinueStreamAsync(
+                    accessLease,
+                    authorize,
+                    logger,
+                    "admin-history",
+                    cancellationToken).ConfigureAwait(false))
+            {
+                yield break;
+            }
+
             long observedVersion = streamPulse.CaptureVersion(NotificationStreamKind.History);
             Result<IReadOnlyList<AdminNotificationHistoryItem>> result = await dispatcher.QueryAsync(
                 new StreamTenantNotificationHistoryQuery(userId, afterSequence, options.BatchSize),
@@ -557,11 +611,21 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
             bool changed = await streamPulse.WaitForChangeAsync(
                     NotificationStreamKind.History,
                     observedVersion,
-                    options.HeartbeatInterval,
+                    accessLease.LimitWaitInterval(options.HeartbeatInterval),
                     cancellationToken)
                 .ConfigureAwait(false);
             if (!changed)
             {
+                if (!await CanContinueStreamAsync(
+                        accessLease,
+                        authorize,
+                        logger,
+                        "admin-history",
+                        cancellationToken).ConfigureAwait(false))
+                {
+                    yield break;
+                }
+
                 yield return new SseItem<object?>(null, "heartbeat");
             }
         }
@@ -574,6 +638,8 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
         string recipientId,
         long initialCursor,
         NotificationStreamOptions options,
+        NotificationStreamAccessLease accessLease,
+        Func<CancellationToken, Task<bool>> authorize,
         INotificationStreamPulse streamPulse,
         ILogger logger,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
@@ -582,6 +648,16 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            if (!await CanContinueStreamAsync(
+                    accessLease,
+                    authorize,
+                    logger,
+                    "admin-broadcast",
+                    cancellationToken).ConfigureAwait(false))
+            {
+                yield break;
+            }
+
             long observedVersion = streamPulse.CaptureVersion(NotificationStreamKind.Broadcasts);
             Result<IReadOnlyList<NotificationBroadcastItem>> result = await dispatcher.QueryAsync(
                 new StreamNotificationBroadcastsQuery(
@@ -612,21 +688,90 @@ public sealed class NotificationsAdminApiModule : IAdminApiModule
             bool changed = await streamPulse.WaitForChangeAsync(
                     NotificationStreamKind.Broadcasts,
                     observedVersion,
-                    options.HeartbeatInterval,
+                    accessLease.LimitWaitInterval(options.HeartbeatInterval),
                     cancellationToken)
                 .ConfigureAwait(false);
             if (!changed)
             {
+                if (!await CanContinueStreamAsync(
+                        accessLease,
+                        authorize,
+                        logger,
+                        "admin-broadcast",
+                        cancellationToken).ConfigureAwait(false))
+                {
+                    yield break;
+                }
+
                 yield return new SseItem<object?>(null, "heartbeat");
             }
+        }
+    }
+
+    private static async Task<bool> IsAdminAuthorizedAsync(
+        IAdminAuthorizationService authorization,
+        AdminActor actor,
+        AdminOperation operation,
+        string scopeId,
+        CancellationToken cancellationToken)
+    {
+        AdminAuthorizationResult result = await authorization.AuthorizeAsync(
+                actor,
+                operation.Permission,
+                scopeId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        return result.IsAuthorized;
+    }
+
+    private static async Task<bool> CanContinueStreamAsync(
+        NotificationStreamAccessLease accessLease,
+        Func<CancellationToken, Task<bool>> authorize,
+        ILogger logger,
+        string streamName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            NotificationStreamAccessOutcome outcome = await accessLease
+                .EvaluateAsync(authorize, cancellationToken)
+                .ConfigureAwait(false);
+            if (outcome == NotificationStreamAccessOutcome.Active)
+            {
+                return true;
+            }
+
+            logger.LogDebug(
+                "Notification {StreamName} stream access lease ended with {AccessOutcome}.",
+                streamName,
+                outcome);
+            return false;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Notification {StreamName} stream access revalidation failed with {ExceptionType}; the stream will be closed.",
+                streamName,
+                exception.GetType().Name);
+            return false;
         }
     }
 
     private static string RequiredScopeId(IScopeContext scopeContext) =>
         scopeContext.ScopeId ?? string.Empty;
 
+    private static AdminActor RequiredActor(IAdminActorContext actorContext) =>
+        actorContext.Actor ?? throw new InvalidOperationException("The admin actor context is unavailable.");
+
     private static string RequiredActorId(IAdminActorContext actorContext) =>
         actorContext.Actor?.Id ?? string.Empty;
+
+    private static TimeProvider ResolveTimeProvider(HttpContext httpContext) =>
+        httpContext.RequestServices.GetService<TimeProvider>() ?? TimeProvider.System;
 
     private static string PayloadJson(AdminCreateNotificationBroadcastRequest request) =>
         request.Payload?.GetRawText() ?? "{}";

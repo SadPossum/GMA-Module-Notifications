@@ -1,9 +1,9 @@
 namespace Gma.Modules.Notifications.Tests;
 
+using Gma.Modules.Notifications.Application;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
-using Gma.Modules.Notifications.Application;
 using Xunit;
 
 [Trait("Category", "Unit")]
@@ -24,6 +24,12 @@ public sealed class NotificationsApplicationRegistrationTests
         Assert.True(options.MonitorEnabled);
         Assert.Equal(NotificationStreamOptions.DefaultBatchSize, options.BatchSize);
         Assert.Equal(NotificationStreamOptions.DefaultPollInterval, options.PollInterval);
+        Assert.Equal(
+            NotificationStreamOptions.DefaultAuthorizationRevalidationInterval,
+            options.AuthorizationRevalidationInterval);
+        Assert.Equal(
+            NotificationStreamOptions.DefaultMaximumConnectionLifetime,
+            options.MaximumConnectionLifetime);
     }
 
     [Fact]
@@ -62,5 +68,27 @@ public sealed class NotificationsApplicationRegistrationTests
             () => services.AddNotificationsApplication(configuration));
 
         Assert.Contains("BatchSize", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("Notifications:DurableStreams:AuthorizationRevalidationInterval", "00:00:01", "AuthorizationRevalidationInterval")]
+    [InlineData("Notifications:DurableStreams:MaximumConnectionLifetime", "00:00:30", "MaximumConnectionLifetime")]
+    public void Application_registration_rejects_unsafe_stream_access_lease_options(
+        string key,
+        string value,
+        string expectedSetting)
+    {
+        ConfigurationBuilder configurationBuilder = new();
+        configurationBuilder.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            [key] = value
+        });
+        IConfiguration configuration = configurationBuilder.Build();
+        ServiceCollection services = new();
+
+        OptionsValidationException exception = Assert.Throws<OptionsValidationException>(
+            () => services.AddNotificationsApplication(configuration));
+
+        Assert.Contains(expectedSetting, exception.Message, StringComparison.Ordinal);
     }
 }

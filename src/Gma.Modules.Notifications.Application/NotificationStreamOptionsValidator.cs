@@ -27,6 +27,21 @@ internal sealed class NotificationStreamOptionsValidator : IValidateOptions<Noti
                 $"{NotificationStreamOptions.SectionName}:HeartbeatInterval must be between 5 seconds and 5 minutes and cannot be shorter than PollInterval.");
         }
 
+        if (options.AuthorizationRevalidationInterval < TimeSpan.FromSeconds(5) ||
+            options.AuthorizationRevalidationInterval > TimeSpan.FromMinutes(5))
+        {
+            return ValidateOptionsResult.Fail(
+                $"{NotificationStreamOptions.SectionName}:AuthorizationRevalidationInterval must be between 5 seconds and 5 minutes.");
+        }
+
+        if (options.MaximumConnectionLifetime < TimeSpan.FromMinutes(1) ||
+            options.MaximumConnectionLifetime > TimeSpan.FromHours(24) ||
+            options.MaximumConnectionLifetime < options.AuthorizationRevalidationInterval)
+        {
+            return ValidateOptionsResult.Fail(
+                $"{NotificationStreamOptions.SectionName}:MaximumConnectionLifetime must be between 1 minute and 24 hours and cannot be shorter than AuthorizationRevalidationInterval.");
+        }
+
         return ValidateOptionsResult.Success;
     }
 }
