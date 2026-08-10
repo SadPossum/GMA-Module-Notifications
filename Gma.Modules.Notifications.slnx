@@ -26,6 +26,7 @@
   </Folder>
   <Folder Name="/docs/">
     <File Path="docs/README.md" />
+    <File Path="docs/notification-delivery-recovery-task.md" />
     <File Path="docs/notification-history-lifecycle-task.md" />
     <File Path="docs/notification-lifecycle-scaling-task.md" />
     <File Path="docs/notifications-consumer-contract-boundary-task.md" />
@@ -37,6 +38,7 @@
     <File Path="eng/check-migrations.ps1" />
     <File Path="eng/check-repository-release.ps1" />
     <File Path="eng/check-repository-security.ps1" />
+    <File Path="eng/verify.ps1" />
   </Folder>
   <Folder Name="/src/Admin/">
     <Project Path="src/Gma.Modules.Notifications.Admin.Contracts/Gma.Modules.Notifications.Admin.Contracts.csproj" />

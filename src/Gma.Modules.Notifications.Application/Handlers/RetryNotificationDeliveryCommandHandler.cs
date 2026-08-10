@@ -6,11 +6,13 @@ using Gma.Framework.Runtime.Time;
 using Gma.Modules.Notifications.Application.Commands;
 using Gma.Modules.Notifications.Application.Ports;
 using Gma.Modules.Notifications.Domain.Aggregates;
+using Microsoft.Extensions.Options;
 
 internal sealed class RetryNotificationDeliveryCommandHandler(
     INotificationRoutingRepository repository,
     INotificationDeliveryAdapterCatalog adapterCatalog,
-    ISystemClock clock)
+    ISystemClock clock,
+    IOptions<NotificationDeliveryOptions> deliveryOptions)
     : ICommandHandler<RetryNotificationDeliveryCommand, Unit>
 {
     public async Task<Result<Unit>> HandleAsync(
@@ -51,7 +53,10 @@ internal sealed class RetryNotificationDeliveryCommandHandler(
             return Result.Failure<Unit>(NotificationsApplicationErrors.DeliveryProviderUnsupported);
         }
 
-        Result retried = delivery.RetryManually(clock.UtcNow, provider);
+        Result retried = delivery.RetryManually(
+            clock.UtcNow,
+            deliveryOptions.Value.MaxAttempts,
+            provider);
         return retried.IsFailure
             ? Result.Failure<Unit>(retried.Error)
             : Result.Success(Unit.Value);

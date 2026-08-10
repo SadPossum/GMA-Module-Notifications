@@ -325,6 +325,157 @@ public sealed class NotificationDeliveryServiceTests
         Assert.Equal(DomainDeliveryStatus.Pending, stored.Status);
     }
 
+    [Fact]
+    public async Task Durable_worker_exhausts_an_expired_final_lease_and_records_the_abandoned_attempt()
+    {
+        await using ServiceProvider serviceProvider = CreateDeliveryProvider(
+            $"delivery-worker-final-lease-{Guid.NewGuid():N}");
+        Guid deliveryId = await SeedClaimedDeliveryAsync(
+            serviceProvider,
+            "lost-worker",
+            maxAttempts: 1);
+        NotificationDeliveryService recovery = CreateWorker(
+            serviceProvider,
+            "recovery-worker",
+            Now.AddMinutes(2));
+
+        Guid[] claimed = await recovery.ClaimAsync(1, CancellationToken.None);
+
+        Assert.Empty(claimed);
+        await using AsyncServiceScope assertionScope =
+            serviceProvider.CreateAsyncScope();
+        NotificationsDbContext dbContext = assertionScope.ServiceProvider
+            .GetRequiredService<NotificationsDbContext>();
+        NotificationDelivery delivery = await dbContext
+            .NotificationDeliveries
+            .SingleAsync(item => item.Id == deliveryId);
+        NotificationDeliveryAttempt attempt = Assert.Single(
+            await dbContext.NotificationDeliveryAttempts.ToArrayAsync());
+        Assert.Equal(DomainDeliveryStatus.Exhausted, delivery.Status);
+        Assert.Equal(1, delivery.Attempts);
+        Assert.Equal("worker-lease-expired", delivery.LastCode);
+        Assert.Null(delivery.LockedBy);
+        Assert.Null(delivery.LockedUntilUtc);
+        Assert.Equal(1, attempt.AttemptNumber);
+        Assert.Equal(DomainAttemptOutcome.Exception, attempt.Outcome);
+        Assert.Equal("worker-lease-expired", attempt.Code);
+    }
+
+    [Fact]
+    public async Task Durable_worker_records_an_expired_lease_before_reclaiming_the_next_attempt()
+    {
+        await using ServiceProvider serviceProvider = CreateDeliveryProvider(
+            $"delivery-worker-reclaim-{Guid.NewGuid():N}");
+        Guid deliveryId = await SeedClaimedDeliveryAsync(
+            serviceProvider,
+            "lost-worker",
+            maxAttempts: 2);
+        NotificationDeliveryService recovery = CreateWorker(
+            serviceProvider,
+            "recovery-worker",
+            Now.AddMinutes(2));
+
+        Guid claimed = Assert.Single(
+            await recovery.ClaimAsync(1, CancellationToken.None));
+        Assert.Equal(deliveryId, claimed);
+        await recovery.DeliverAsync(deliveryId, CancellationToken.None);
+
+        await using AsyncServiceScope assertionScope =
+            serviceProvider.CreateAsyncScope();
+        NotificationsDbContext dbContext = assertionScope.ServiceProvider
+            .GetRequiredService<NotificationsDbContext>();
+        NotificationDelivery delivery = await dbContext
+            .NotificationDeliveries
+            .SingleAsync(item => item.Id == deliveryId);
+        NotificationDeliveryAttempt[] attempts = await dbContext
+            .NotificationDeliveryAttempts
+            .OrderBy(attempt => attempt.AttemptNumber)
+            .ToArrayAsync();
+        Assert.Equal(DomainDeliveryStatus.Delivered, delivery.Status);
+        Assert.Equal(2, delivery.Attempts);
+        Assert.Equal([1, 2], attempts.Select(attempt => attempt.AttemptNumber));
+        Assert.Equal(DomainAttemptOutcome.Exception, attempts[0].Outcome);
+        Assert.Equal("worker-lease-expired", attempts[0].Code);
+        Assert.Equal(DomainAttemptOutcome.Delivered, attempts[1].Outcome);
+    }
+
+    private static ServiceProvider CreateDeliveryProvider(string databaseName)
+    {
+        InMemoryDatabaseRoot databaseRoot = new();
+        ServiceCollection services = new();
+        services.AddMetrics();
+        services.AddSingleton<IScopeContext>(new TestScopeContext("tenant-a"));
+        services.AddDbContext<NotificationsDbContext>(options =>
+            options.UseInMemoryDatabase(databaseName, databaseRoot));
+        return services.BuildServiceProvider();
+    }
+
+    private static async Task<Guid> SeedClaimedDeliveryAsync(
+        ServiceProvider serviceProvider,
+        string workerId,
+        int maxAttempts)
+    {
+        Guid notificationId = Guid.CreateVersion7();
+        Guid deliveryId = Guid.CreateVersion7();
+        await using AsyncServiceScope seedScope =
+            serviceProvider.CreateAsyncScope();
+        NotificationsDbContext dbContext = seedScope.ServiceProvider
+            .GetRequiredService<NotificationsDbContext>();
+        dbContext.UserNotifications.Add(UserNotification.Create(
+            notificationId,
+            "tenant-a",
+            "user-a",
+            "auth",
+            "auth.account-accessed",
+            1,
+            "New sign-in",
+            null,
+            DomainSeverity.Warning,
+            Now,
+            Now,
+            "{}").Value);
+        NotificationDelivery delivery = NotificationDelivery.CreatePending(
+            deliveryId,
+            "tenant-a",
+            notificationId,
+            NotificationTags.Email,
+            TestDurableSink.Provider,
+            Now,
+            maxAttempts).Value;
+        Assert.True(delivery.Claim(
+            workerId,
+            Now,
+            TimeSpan.FromMinutes(1)).IsSuccess);
+        dbContext.NotificationDeliveries.Add(delivery);
+        await dbContext.SaveChangesAsync();
+        return deliveryId;
+    }
+
+    private static NotificationDeliveryService CreateWorker(
+        ServiceProvider serviceProvider,
+        string workerId,
+        DateTimeOffset nowUtc)
+    {
+        NotificationDeliveryMetrics metrics = new(
+            serviceProvider.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(),
+            Options.Create(new ApplicationIdentityOptions
+            {
+                Namespace = "notification-tests"
+            }));
+        return new NotificationDeliveryService(
+            serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            new NotificationDeliveryAdapterCatalog([new TestDurableSink()]),
+            new FixedClock(nowUtc),
+            new TestIdGenerator(),
+            Options.Create(new NotificationDeliveryOptions
+            {
+                WorkerId = workerId,
+                LeaseSeconds = 60
+            }),
+            metrics,
+            NullLogger<NotificationDeliveryService>.Instance);
+    }
+
     private sealed class TestDurableSink : IUserNotificationSink
     {
         public const string Provider = "test-email";

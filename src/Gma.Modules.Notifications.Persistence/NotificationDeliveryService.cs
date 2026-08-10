@@ -31,6 +31,7 @@ internal sealed class NotificationDeliveryService(
     ILogger<NotificationDeliveryService> logger)
     : BackgroundService
 {
+    private const string ExpiredLeaseCode = "worker-lease-expired";
     private readonly string workerId = CreateWorkerId(options.Value.WorkerId, idGenerator);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -82,21 +83,39 @@ internal sealed class NotificationDeliveryService(
             int waveSize = Math.Min(
                 options.Value.MaxConcurrency,
                 options.Value.BatchSize - processedCount);
-            Guid[] deliveryIds = await this.ClaimAsync(waveSize, cancellationToken).ConfigureAwait(false);
-            if (deliveryIds.Length == 0)
+            ClaimBatch claim = await this.ClaimBatchAsync(
+                    waveSize,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (claim.DeliveryIds.Length == 0 && claim.TerminalRecoveryCount == 0)
             {
                 break;
             }
 
-            await Task.WhenAll(deliveryIds.Select(deliveryId => this.DeliverAsync(deliveryId, cancellationToken)))
+            await Task.WhenAll(claim.DeliveryIds.Select(
+                    deliveryId => this.DeliverAsync(
+                        deliveryId,
+                        cancellationToken)))
                 .ConfigureAwait(false);
-            processedCount += deliveryIds.Length;
+            processedCount += claim.DeliveryIds.Length +
+                claim.TerminalRecoveryCount;
         }
 
         return processedCount;
     }
 
     internal async Task<Guid[]> ClaimAsync(int maximumCount, CancellationToken cancellationToken)
+    {
+        ClaimBatch claim = await this.ClaimBatchAsync(
+                maximumCount,
+                cancellationToken)
+            .ConfigureAwait(false);
+        return claim.DeliveryIds;
+    }
+
+    private async Task<ClaimBatch> ClaimBatchAsync(
+        int maximumCount,
+        CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(maximumCount, 1);
 
@@ -124,8 +143,27 @@ internal sealed class NotificationDeliveryService(
                 .ConfigureAwait(false);
 
             List<Guid> claimed = [];
+            List<string> expiredLeaseProviders = [];
+            int terminalRecoveryCount = 0;
             foreach (NotificationDelivery delivery in candidates)
             {
+                if (delivery.Status == NotificationDeliveryStatus.Processing &&
+                    delivery.LockedUntilUtc is not null &&
+                    delivery.LockedUntilUtc <= nowUtc)
+                {
+                    await this.RecordExpiredLeaseAsync(
+                            dbContext,
+                            delivery,
+                            nowUtc,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    expiredLeaseProviders.Add(delivery.Provider.Value);
+                    if (delivery.Status == NotificationDeliveryStatus.Exhausted)
+                    {
+                        terminalRecoveryCount++;
+                    }
+                }
+
                 if (delivery.Claim(this.workerId, nowUtc, lockedUntilUtc - nowUtc).IsSuccess)
                 {
                     claimed.Add(delivery.Id);
@@ -138,7 +176,18 @@ internal sealed class NotificationDeliveryService(
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            return claimed.ToArray();
+            foreach (string provider in expiredLeaseProviders)
+            {
+                metrics.RecordAttempt(
+                    provider,
+                    NotificationRoutingSemanticNames.AttemptOutcome(
+                        NotificationDeliveryAttemptOutcome.Exception),
+                    TimeSpan.Zero);
+            }
+
+            return new ClaimBatch(
+                claimed.ToArray(),
+                terminalRecoveryCount);
         }
     }
 
@@ -290,7 +339,7 @@ internal sealed class NotificationDeliveryService(
             return;
         }
 
-        await AddAttemptAsync(dbContext, delivery, outcome, startedAtUtc, completedAtUtc, code: null, providerMessageId, cancellationToken)
+        await this.AddAttemptAsync(dbContext, delivery, outcome, startedAtUtc, completedAtUtc, code: null, providerMessageId, cancellationToken)
             .ConfigureAwait(false);
         await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         metrics.RecordAttempt(
@@ -313,7 +362,7 @@ internal sealed class NotificationDeliveryService(
             return;
         }
 
-        await AddAttemptAsync(dbContext, delivery, outcome, startedAtUtc, completedAtUtc, code, providerMessageId: null, cancellationToken)
+        await this.AddAttemptAsync(dbContext, delivery, outcome, startedAtUtc, completedAtUtc, code, providerMessageId: null, cancellationToken)
             .ConfigureAwait(false);
         await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         metrics.RecordAttempt(
@@ -345,7 +394,7 @@ internal sealed class NotificationDeliveryService(
             return;
         }
 
-        await AddAttemptAsync(
+        await this.AddAttemptAsync(
                 dbContext,
                 delivery,
                 outcome,
@@ -400,9 +449,59 @@ internal sealed class NotificationDeliveryService(
         CancellationToken cancellationToken) =>
         this.CompleteRejectedAsync(dbContext, delivery, outcome, code, clock.UtcNow, cancellationToken);
 
-    private static async Task AddAttemptAsync(
+    private async Task RecordExpiredLeaseAsync(
         NotificationsDbContext dbContext,
         NotificationDelivery delivery,
+        DateTimeOffset recoveredAtUtc,
+        CancellationToken cancellationToken)
+    {
+        int attemptNumber = delivery.Attempts;
+        Framework.Results.Result expired = delivery.RecordExpiredLease(
+            recoveredAtUtc,
+            ExpiredLeaseCode);
+        if (expired.IsFailure)
+        {
+            throw new InvalidOperationException(
+                $"An expired notification delivery lease could not be recorded: {expired.Error.Code}.");
+        }
+
+        await this.AddAttemptAsync(
+                dbContext,
+                delivery,
+                attemptNumber,
+                NotificationDeliveryAttemptOutcome.Exception,
+                recoveredAtUtc,
+                recoveredAtUtc,
+                ExpiredLeaseCode,
+                providerMessageId: null,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private Task AddAttemptAsync(
+        NotificationsDbContext dbContext,
+        NotificationDelivery delivery,
+        NotificationDeliveryAttemptOutcome outcome,
+        DateTimeOffset startedAtUtc,
+        DateTimeOffset completedAtUtc,
+        string? code,
+        string? providerMessageId,
+        CancellationToken cancellationToken) =>
+        this.AddAttemptAsync(
+            dbContext,
+            delivery,
+            delivery.Attempts,
+            outcome,
+            startedAtUtc,
+            completedAtUtc,
+            code,
+            providerMessageId,
+            cancellationToken);
+
+    private async Task AddAttemptAsync(
+        NotificationsDbContext dbContext,
+        NotificationDelivery delivery,
+        int attemptNumber,
         NotificationDeliveryAttemptOutcome outcome,
         DateTimeOffset startedAtUtc,
         DateTimeOffset completedAtUtc,
@@ -411,10 +510,10 @@ internal sealed class NotificationDeliveryService(
         CancellationToken cancellationToken)
     {
         Framework.Results.Result<NotificationDeliveryAttempt> attempt = NotificationDeliveryAttempt.Create(
-            Guid.CreateVersion7(),
+            idGenerator.NewId(),
             delivery.ScopeId,
             delivery.Id,
-            delivery.Attempts,
+            attemptNumber,
             delivery.Provider.Value,
             outcome,
             startedAtUtc,
@@ -493,7 +592,11 @@ internal sealed class NotificationDeliveryService(
                 .FromSqlInterpolated($"""
                     SELECT *
                     FROM "notifications"."deliveries" AS delivery
-                    WHERE "Attempts" < "MaxAttempts"
+                    WHERE ("Attempts" < "MaxAttempts"
+                       OR ("Status" = {processing}
+                           AND "LockedUntilUtc" IS NOT NULL
+                           AND "LockedUntilUtc" <= {nowUtc})
+                      )
                       AND "Status" IN ({pending}, {retryScheduled}, {processing})
                       AND ("NextAttemptAtUtc" IS NULL OR "NextAttemptAtUtc" <= {nowUtc})
                       AND ("LockedUntilUtc" IS NULL OR "LockedUntilUtc" <= {nowUtc})
@@ -516,7 +619,10 @@ internal sealed class NotificationDeliveryService(
                 .FromSqlInterpolated($"""
                     SELECT TOP ({claimLimit}) *
                     FROM [notifications].[deliveries] AS [delivery] WITH (UPDLOCK, READPAST, ROWLOCK)
-                    WHERE [Attempts] < [MaxAttempts]
+                    WHERE ([Attempts] < [MaxAttempts]
+                       OR ([Status] = {processing}
+                           AND [LockedUntilUtc] IS NOT NULL
+                           AND [LockedUntilUtc] <= {nowUtc}))
                       AND [Status] IN ({pending}, {retryScheduled}, {processing})
                       AND ([NextAttemptAtUtc] IS NULL OR [NextAttemptAtUtc] <= {nowUtc})
                       AND ([LockedUntilUtc] IS NULL OR [LockedUntilUtc] <= {nowUtc})
@@ -534,7 +640,10 @@ internal sealed class NotificationDeliveryService(
         return dbContext.NotificationDeliveries
             .IgnoreQueryFilters()
             .Where(delivery =>
-                delivery.Attempts < delivery.MaxAttempts &&
+                (delivery.Attempts < delivery.MaxAttempts ||
+                 (delivery.Status == NotificationDeliveryStatus.Processing &&
+                  delivery.LockedUntilUtc != null &&
+                  delivery.LockedUntilUtc <= nowUtc)) &&
                 (delivery.Status == NotificationDeliveryStatus.Pending ||
                  delivery.Status == NotificationDeliveryStatus.RetryScheduled ||
                  delivery.Status == NotificationDeliveryStatus.Processing) &&
@@ -550,4 +659,8 @@ internal sealed class NotificationDeliveryService(
             .Take(claimLimit)
             .ToArrayAsync(cancellationToken);
     }
+
+    private sealed record ClaimBatch(
+        Guid[] DeliveryIds,
+        int TerminalRecoveryCount);
 }

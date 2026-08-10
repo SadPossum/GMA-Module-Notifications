@@ -6,6 +6,8 @@ Large-history and generic scope closure are tracked in
 [Notification Lifecycle Scaling Task](notification-lifecycle-scaling-task.md).
 Consumer-facing lifecycle and projector boundaries are tracked in
 [Notifications Consumer Contract Boundary Task](notifications-consumer-contract-boundary-task.md).
+Durable worker-loss and operator-retry correctness is tracked in
+[Notification Delivery Recovery Task](notification-delivery-recovery-task.md).
 
 The optional Notifications module owns durable, addressed user notifications. It stores inbox history and read state, persists a tenant-scoped tag catalog and user preferences, plans durable adapter deliveries, records immutable attempts/receipts, and exposes user and operator APIs. It also owns durable audience broadcasts.
 
@@ -101,7 +103,13 @@ The database prevents duplicate plans for the same notification, delivery tag, a
 
 Adapter exception messages are logged only by exception type and are never stored. Persisted attempt codes are bounded semantic codes. Notification content, tenant/user ids, destinations, and payload fields are not metric dimensions.
 
-Operators may retry `rejected`, `exhausted`, and `unroutable` jobs after repairing a provider or route. A retry resets the job to pending while retaining the previous immutable attempt history.
+Operators may retry `rejected`, `exhausted`, and `unroutable` jobs after repairing a provider or route. A retry returns the job to pending, grants the configured number of additional attempts, and retains monotonic attempt numbering with the previous immutable history.
+
+When a worker lease expires, the next claimant records an immutable
+`worker-lease-expired` exception attempt before reclaiming the delivery. If the
+abandoned attempt consumed the final retry budget, the delivery becomes
+`exhausted` without another adapter call. Recovery cleanup counts against the
+same bounded delivery batch and does not add a separate unbounded sweep.
 
 `BatchSize` bounds one healthy drain cycle; `MaxConcurrency` bounds each in-process delivery wave. A full cycle immediately starts another cycle without waiting for the poll interval. Multiple replicas lease disjoint rows, and expired leases can be reclaimed after a worker exits. An adapter-provided retry timestamp is clamped to `RetryMaxMinutes` so a provider cannot accidentally strand work beyond the host's configured recovery bound.
 

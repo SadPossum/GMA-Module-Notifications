@@ -10,6 +10,7 @@ using Gma.Framework.Runtime.Identity;
 using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
 using Gma.Modules.Notifications.Application;
+using Gma.Modules.Notifications.Application.Commands;
 using Gma.Modules.Notifications.Application.Handlers;
 using Gma.Modules.Notifications.Application.Ports;
 using Gma.Modules.Notifications.Contracts;
@@ -154,6 +155,7 @@ public sealed class NotificationsRelationalIntegrationTests
         NotificationsDbContext assertionDb = assertionScope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
         Assert.Equal(9, await assertionDb.NotificationDeliveries.CountAsync(
             delivery => delivery.Status == DomainDeliveryStatus.Delivered));
+        await AssertDeliveryRecoveryAsync(provider, sink);
     }
 
     [DockerFact]
@@ -176,6 +178,18 @@ public sealed class NotificationsRelationalIntegrationTests
         Assert.Equal(2, claims[0].Length);
         Assert.Equal(2, claims[1].Length);
         Assert.Empty(claims[0].Intersect(claims[1]));
+        NotificationDeliveryService recovery = CreateWorker(
+            provider,
+            "sql-worker-recovery",
+            Now.AddMinutes(2),
+            sink,
+            batchSize: 4,
+            maxConcurrency: 2);
+        Assert.Equal(
+            4,
+            await recovery.ProcessAvailableBatchAsync(
+                CancellationToken.None));
+        await AssertDeliveryRecoveryAsync(provider, sink);
         await AssertRetentionLifecycleAsync(provider);
     }
 
@@ -1851,6 +1865,100 @@ public sealed class NotificationsRelationalIntegrationTests
         }
 
         await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task AssertDeliveryRecoveryAsync(
+        ServiceProvider provider,
+        TrackingDeliverySink sink)
+    {
+        DateTimeOffset leasedAtUtc = Now.AddMinutes(10);
+        DateTimeOffset recoveredAtUtc = leasedAtUtc.AddMinutes(2);
+        UserNotification notification = CreateNotification(
+            "delivery-recovery-user",
+            $"delivery-recovery-{Guid.NewGuid():N}");
+        NotificationDelivery delivery = NotificationDelivery.CreatePending(
+            Guid.CreateVersion7(),
+            "tenant-a",
+            notification.Id,
+            NotificationTags.Email,
+            TrackingDeliverySink.Provider,
+            leasedAtUtc,
+            maxAttempts: 1).Value;
+        Assert.True(delivery.Claim(
+            "abandoned-worker",
+            leasedAtUtc,
+            TimeSpan.FromMinutes(1)).IsSuccess);
+        await using (AsyncServiceScope seedScope = provider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext = seedScope.ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            await AddNotificationAsync(dbContext, notification);
+            dbContext.NotificationDeliveries.Add(delivery);
+            await dbContext.SaveChangesAsync();
+        }
+
+        NotificationDeliveryService recovery = CreateWorker(
+            provider,
+            "lease-recovery-worker",
+            recoveredAtUtc,
+            sink,
+            batchSize: 1,
+            maxConcurrency: 1);
+        Assert.Empty(await recovery.ClaimAsync(1, CancellationToken.None));
+
+        await using (AsyncServiceScope retryScope = provider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext = retryScope.ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            RetryNotificationDeliveryCommandHandler handler = new(
+                new NotificationRoutingRepository(dbContext),
+                new TestAdapterCatalog(sink),
+                new FixedClock(recoveredAtUtc.AddMinutes(1)),
+                Options.Create(new NotificationDeliveryOptions
+                {
+                    MaxAttempts = 1
+                }));
+            Framework.Results.Result<Framework.Cqrs.Unit> retried =
+                await handler.HandleAsync(
+                    new RetryNotificationDeliveryCommand(delivery.Id),
+                    CancellationToken.None);
+            Assert.True(retried.IsSuccess);
+            await dbContext.SaveChangesAsync();
+        }
+
+        NotificationDeliveryService redelivery = CreateWorker(
+            provider,
+            "manual-retry-worker",
+            recoveredAtUtc.AddMinutes(2),
+            sink,
+            batchSize: 1,
+            maxConcurrency: 1);
+        Assert.Equal(
+            delivery.Id,
+            Assert.Single(await redelivery.ClaimAsync(
+                1,
+                CancellationToken.None)));
+        await redelivery.DeliverAsync(delivery.Id, CancellationToken.None);
+
+        await using AsyncServiceScope assertionScope =
+            provider.CreateAsyncScope();
+        NotificationsDbContext assertionDb = assertionScope.ServiceProvider
+            .GetRequiredService<NotificationsDbContext>();
+        NotificationDelivery stored = await assertionDb
+            .NotificationDeliveries
+            .SingleAsync(candidate => candidate.Id == delivery.Id);
+        NotificationDeliveryAttempt[] attempts = await assertionDb
+            .NotificationDeliveryAttempts
+            .Where(attempt => attempt.DeliveryId == delivery.Id)
+            .OrderBy(attempt => attempt.AttemptNumber)
+            .ToArrayAsync();
+        Assert.Equal(DomainDeliveryStatus.Delivered, stored.Status);
+        Assert.Equal(2, stored.Attempts);
+        Assert.Equal(2, stored.MaxAttempts);
+        Assert.Equal([1, 2], attempts.Select(attempt => attempt.AttemptNumber));
+        Assert.Equal(DomainAttemptOutcome.Exception, attempts[0].Outcome);
+        Assert.Equal("worker-lease-expired", attempts[0].Code);
+        Assert.Equal(DomainAttemptOutcome.Delivered, attempts[1].Outcome);
     }
 
     private static async Task AssertRetentionLifecycleAsync(

@@ -170,12 +170,47 @@ public sealed class NotificationDelivery : ScopedAggregateRoot<Guid>
         return Result.Success();
     }
 
-    public Result RetryManually(DateTimeOffset nowUtc, string? provider = null)
+    public Result RecordExpiredLease(DateTimeOffset nowUtc, string code)
+    {
+        if (nowUtc == default ||
+            this.Status != NotificationDeliveryStatus.Processing ||
+            this.Attempts < 1 ||
+            this.LockedUntilUtc is null ||
+            this.LockedUntilUtc > nowUtc ||
+            string.IsNullOrWhiteSpace(this.LockedBy) ||
+            !TryNormalizeCode(code, out string? normalizedCode))
+        {
+            return Result.Failure(NotificationsDomainErrors.DeliveryLeaseLost);
+        }
+
+        this.LastCode = normalizedCode;
+        if (this.Attempts >= this.MaxAttempts)
+        {
+            this.Status = NotificationDeliveryStatus.Exhausted;
+            this.CompletedAtUtc = nowUtc;
+            this.NextAttemptAtUtc = null;
+        }
+        else
+        {
+            this.Status = NotificationDeliveryStatus.RetryScheduled;
+            this.NextAttemptAtUtc = nowUtc;
+        }
+
+        this.ReleaseLease(clearNextAttempt: false);
+        return Result.Success();
+    }
+
+    public Result RetryManually(
+        DateTimeOffset nowUtc,
+        int additionalAttempts,
+        string? provider = null)
     {
         if (nowUtc == default || this.Status is not (
             NotificationDeliveryStatus.Rejected or
             NotificationDeliveryStatus.Exhausted or
-            NotificationDeliveryStatus.Unroutable))
+            NotificationDeliveryStatus.Unroutable) ||
+            additionalAttempts < 1 ||
+            this.Attempts > int.MaxValue - additionalAttempts)
         {
             return Result.Failure(NotificationsDomainErrors.DeliveryCannotBeRetried);
         }
@@ -191,7 +226,7 @@ public sealed class NotificationDelivery : ScopedAggregateRoot<Guid>
         }
 
         this.Status = NotificationDeliveryStatus.Pending;
-        this.Attempts = 0;
+        this.MaxAttempts = this.Attempts + additionalAttempts;
         this.CompletedAtUtc = null;
         this.DeliveredAtUtc = null;
         this.NextAttemptAtUtc = nowUtc;
