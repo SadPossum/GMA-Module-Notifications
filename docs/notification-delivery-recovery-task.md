@@ -1,6 +1,6 @@
 # Notification Delivery Recovery Task
 
-Status: implementation complete; publication verification pending
+Status: completed
 Date: 2026-08-10
 
 ## Goal
@@ -90,8 +90,11 @@ provider-neutral semantics, and the existing at-least-once contract.
   Server containers: two passed, zero failed, zero skipped.
 - No persistence migration is required; the existing attempts, maximum-attempts,
   lease, and immutable attempt-row schema supports the corrected semantics.
-- Exact pushed-commit CI and downstream Skeleton/BunkFy pin evidence remain
-  pending.
+- Functional commit `80c54d00e771a35da3e534ac3a0f129b82c176e0`
+  passed exact Validate run `31381043435`, including Ubuntu, Windows, and the
+  PostgreSQL/SQL Server relational job, plus Security Baseline run
+  `31381043440`.
+- Downstream Skeleton and BunkFy pin evidence is recorded in those repositories.
 
 ## Explicitly Deferred
 
