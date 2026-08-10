@@ -1,6 +1,6 @@
 namespace Gma.Modules.Notifications.Persistence.Configurations;
 
-using Gma.Modules.Notifications.Application.Ports;
+using Gma.Modules.Notifications.Contracts;
 using Gma.Modules.Notifications.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;

@@ -1,5 +1,6 @@
 namespace Gma.Modules.Notifications.Persistence.Configurations;
 
+using Gma.Modules.Notifications.Contracts;
 using Gma.Modules.Notifications.Domain.Entities;
 using Gma.Modules.Notifications.Domain.ValueObjects;
 using Microsoft.EntityFrameworkCore;
@@ -23,7 +24,7 @@ internal sealed class NotificationHistoryBatchCloseOperationConfiguration
                     "CK_notification_history_batch_close_operations_batch",
                     "\"BatchSize\" >= 1 AND " +
                     $"\"BatchSize\" <= " +
-                    Application.Ports.NotificationHistoryLifecycleLimits
+                    NotificationHistoryLifecycleLimits
                         .MaximumCloseBatchSize);
                 table.HasCheckConstraint(
                     "CK_notification_history_batch_close_operations_progress",

@@ -3,6 +3,7 @@ namespace Gma.Modules.Notifications.Tests;
 using Gma.Framework.Runtime.Time;
 using Gma.Framework.Scoping;
 using Gma.Modules.Notifications.Application.Ports;
+using Gma.Modules.Notifications.Contracts;
 using Gma.Modules.Notifications.Domain.Aggregates;
 using Gma.Modules.Notifications.Domain.Entities;
 using Gma.Modules.Notifications.Domain.ValueObjects;
@@ -134,7 +135,7 @@ public sealed class NotificationScopeDestructionTests
             1,
             "Reservation changed",
             body: null,
-            NotificationSeverity.Info,
+            Domain.ValueObjects.NotificationSeverity.Info,
             Now,
             Now,
             "{}").Value;

@@ -20,6 +20,23 @@ internal static class NotificationContractEnumJson
         return parsed ?? throw new JsonException($"{displayName} is invalid.");
     }
 
+    public static void WriteString<TEnum>(
+        Utf8JsonWriter writer,
+        TEnum value,
+        string displayName,
+        Func<TEnum, string> format)
+        where TEnum : struct, Enum
+    {
+        try
+        {
+            writer.WriteStringValue(format(value));
+        }
+        catch (ArgumentOutOfRangeException exception)
+        {
+            throw new JsonException($"{displayName} is invalid.", exception);
+        }
+    }
+
     public static NotificationSeverity? ParseSeverity(string? value)
     {
         string normalized = Normalize(value);

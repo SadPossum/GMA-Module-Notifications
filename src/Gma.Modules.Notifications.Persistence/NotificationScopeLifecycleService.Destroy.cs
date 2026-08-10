@@ -4,13 +4,13 @@ using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using Gma.Framework.Messaging.Infrastructure;
-using Gma.Modules.Notifications.Application.Ports;
+using Gma.Modules.Notifications.Contracts;
 using Gma.Modules.Notifications.Domain.Aggregates;
 using Gma.Modules.Notifications.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using ContractDestroyReceipt =
-    Application.Ports.NotificationScopeDestroyReceipt;
+    Contracts.NotificationScopeDestroyReceipt;
 using DomainDestroyOperation =
     Domain.Entities.NotificationScopeDestroyOperation;
 using DomainDestroyReceipt = Domain.Entities.NotificationScopeDestroyReceipt;

@@ -53,17 +53,3 @@ public interface INotificationDeliveryAdapterCatalog
     bool Supports(string provider, string deliveryTag);
     IUserNotificationSink? GetProvider(string provider);
 }
-
-public interface IUserNotificationRequestProjector
-{
-    Task ProjectAsync(
-        UserNotificationRequestedIntegrationEventV2 integrationEvent,
-        CancellationToken cancellationToken);
-}
-
-public interface IUserNotificationRequestProjectorV3
-{
-    Task ProjectAsync(
-        UserNotificationRequestedIntegrationEventV3 integrationEvent,
-        CancellationToken cancellationToken);
-}

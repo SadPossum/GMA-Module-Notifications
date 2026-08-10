@@ -147,8 +147,8 @@ anonymised: producers define a high-entropy opaque coordinate and must not
 place raw identifiers, names, addresses, booking references, or free text in
 the reference.
 
-`INotificationHistoryLifecycle` is an in-process application boundary for
-authorized product adapters. It can prepare one empty versioned reference,
+`INotificationHistoryLifecycle` is an in-process Contracts capability for
+authorized product composition. It can prepare one empty versioned reference,
 read a bounded exact-reference snapshot or page, and close that reference with
 an idempotent operation id. `CloseAsync` remains an atomic operation for small
 histories. `CloseBatchAsync` closes the tombstone on its first accepted call and
@@ -169,8 +169,9 @@ data. Global broadcasts remain outside tenant scope lifecycle. The state is a
 module-local consistency boundary, not a framework tenant registry or a public
 administration API.
 
-`INotificationScopeLifecycle` exposes a read-only, in-process scope snapshot and
-typed export pages for product composition. Pages use stable keyset cursors,
+`INotificationScopeLifecycle` is a Contracts capability that exposes a
+read-only, in-process scope snapshot and typed export pages for product
+composition. Pages use stable keyset cursors,
 are capped at 200 records, and must match one selected scope revision. The
 export covers tenant notification history, preferences, routing/tag
 configuration, delivery and attempt state, tenant broadcasts and reads, and
@@ -178,7 +179,7 @@ reference lifecycle proof. It never exports module inbox rows or interprets
 opaque producer payload JSON. Products remain responsible for authorization,
 artifact schemas, export sinks, and final revision verification.
 
-The same application port offers resumable scope destruction as a separate
+The same Contracts capability offers resumable scope destruction as a separate
 operation. Its first accepted call closes the module-owned scope tombstone;
 later calls remove one bounded batch through inbox, tenant broadcast,
 configuration, and notification aggregate stages. Active delivery leases or an

@@ -12,6 +12,7 @@ using Gma.Framework.Scoping;
 using Gma.Modules.Notifications.Application;
 using Gma.Modules.Notifications.Application.Handlers;
 using Gma.Modules.Notifications.Application.Ports;
+using Gma.Modules.Notifications.Contracts;
 using Gma.Modules.Notifications.Domain.Aggregates;
 using Gma.Modules.Notifications.Domain.Entities;
 using Gma.Modules.Notifications.IntegrationTests.Support;

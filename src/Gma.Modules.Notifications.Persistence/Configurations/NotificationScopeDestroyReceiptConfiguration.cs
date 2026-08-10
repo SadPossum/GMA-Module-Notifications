@@ -3,6 +3,7 @@ namespace Gma.Modules.Notifications.Persistence.Configurations;
 using Gma.Modules.Notifications.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using NotificationScopeLifecycleLimits = Gma.Modules.Notifications.Contracts.NotificationScopeLifecycleLimits;
 
 internal sealed class NotificationScopeDestroyReceiptConfiguration
     : IEntityTypeConfiguration<NotificationScopeDestroyReceipt>
@@ -24,7 +25,7 @@ internal sealed class NotificationScopeDestroyReceiptConfiguration
                     "CK_notification_scope_destroy_receipts_progress",
                     "\"BatchSize\" >= 1 AND " +
                     "\"BatchSize\" <= " +
-                    Application.Ports.NotificationScopeLifecycleLimits
+                    NotificationScopeLifecycleLimits
                         .MaximumDestroyBatchSize + " AND " +
                     "((\"RemovedRecordCount\" = 0 AND " +
                     "\"CompletedBatchCount\" = 0) OR " +

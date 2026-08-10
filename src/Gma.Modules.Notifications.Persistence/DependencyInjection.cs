@@ -6,6 +6,7 @@ using Gma.Framework.Notifications;
 using Gma.Framework.Persistence.EntityFrameworkCore;
 using Gma.Modules.Notifications.Application;
 using Gma.Modules.Notifications.Application.Ports;
+using Gma.Modules.Notifications.Contracts;
 using Gma.Modules.Notifications.Persistence.Repositories;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
