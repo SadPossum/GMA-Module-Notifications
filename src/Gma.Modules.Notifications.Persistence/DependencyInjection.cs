@@ -49,6 +49,19 @@ public static class DependencyInjection
                 NotificationsMigrations.PostgreSqlAssembly,
                 NotificationsMigrations.Schema,
                 NotificationsMigrations.HistoryTable));
+        builder.Services.TryAddScoped(
+            serviceProvider =>
+            {
+                DbContextOptions<NotificationsDbContext>? options =
+                    serviceProvider.GetService<
+                        DbContextOptions<NotificationsDbContext>>();
+                return options is not null
+                    ? new NotificationMaintenanceDbContextFactory(options)
+                    : NotificationMaintenanceDbContextFactory
+                        .FromConfiguredContext(
+                            serviceProvider.GetRequiredService<
+                                NotificationsDbContext>());
+            });
 
         builder.Services.TryAddScoped<INotificationHistoryRepository, NotificationHistoryRepository>();
         builder.Services.TryAddScoped<
