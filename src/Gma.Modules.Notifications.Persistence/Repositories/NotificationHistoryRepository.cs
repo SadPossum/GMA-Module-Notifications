@@ -15,6 +15,8 @@ using DomainSeverity = Domain.ValueObjects.NotificationSeverity;
 
 internal sealed class NotificationHistoryRepository(NotificationsDbContext dbContext) : INotificationHistoryRepository
 {
+    private const int ScopeMutationBatchSize = 500;
+
     public async Task AddAsync(UserNotification notification, CancellationToken cancellationToken)
     {
         await dbContext.UserNotifications.AddAsync(notification, cancellationToken).ConfigureAwait(false);
@@ -269,11 +271,22 @@ internal sealed class NotificationHistoryRepository(NotificationsDbContext dbCon
                 throw new NotificationScopeClosedException();
             }
 
-            return await unread
-                .ExecuteUpdateAsync(
-                    setters => setters.SetProperty(notification => notification.ReadAtUtc, readAtUtc),
-                    cancellationToken)
-                .ConfigureAwait(false);
+            int relationalUpdatedCount = 0;
+            foreach (string[] scopeBatch in affectedScopeIds
+                         .Chunk(ScopeMutationBatchSize))
+            {
+                relationalUpdatedCount += await unread
+                    .Where(notification => scopeBatch.Contains(
+                        notification.ScopeId))
+                    .ExecuteUpdateAsync(
+                        setters => setters.SetProperty(
+                            notification => notification.ReadAtUtc,
+                            readAtUtc),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            return relationalUpdatedCount;
         }
 
         UserNotification[] unreadNotifications = await query
