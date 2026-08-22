@@ -150,11 +150,13 @@ retained proof, and receipt immutability.
 
 Production hardening keeps both lifecycle boundaries terminal below the domain
 layer. Scope and exact-reference state rows now enforce coherent open/closed
-coordinates and provider-native triggers reject update or deletion after
-closure. Batch progress and receipts enforce the domain's zero-or-positive
-count shape, fixed proof version, bounded batch size where retained, and ordered
-timestamps. The older atomic close receipt is also linked to its retained
-reference state.
+coordinates. Provider-native scope-state triggers require inserts at revision
+one, exact one-step revision advances with stable scope identity, reject row
+deletion through normal DML, and reject all updates after closure.
+Exact-reference triggers reject update or deletion after closure. Batch progress
+and receipts enforce the domain's zero-or-positive count shape, fixed proof
+version, bounded batch size where retained, and ordered timestamps. The older
+atomic close receipt is also linked to its retained reference state.
 
 Normal scoped writes still use one monotonic module revision. Optimistic
 conflicts on that one open state row are rebased for persistence only, with a

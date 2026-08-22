@@ -177,11 +177,14 @@ restore orchestration.
 Notifications also owns a monotonic state for every mutated tenant scope. The
 state advances once per Notifications unit of work and is checked by tracked
 writes, inbox handling, set-based maintenance, raw receipt writes, retention,
-and delivery claiming. Closing that state suppresses late inbox messages and
-prevents background work from recreating or externally delivering closed-scope
-data. Global broadcasts remain outside tenant scope lifecycle. The state is a
-module-local consistency boundary, not a framework tenant registry or a public
-administration API.
+and delivery claiming. Provider-native storage guards require the first
+persisted revision to be one, require every later revision to advance by exactly
+one without changing scope identity, reject row deletion through normal DML,
+and keep closed rows immutable. Closing that state suppresses late inbox
+messages and prevents background work from recreating or externally delivering
+closed-scope data. Global broadcasts remain outside tenant scope lifecycle. The
+state is a module-local consistency boundary, not a framework tenant registry
+or a public administration API.
 
 `INotificationScopeLifecycle` is a Contracts capability that exposes a
 read-only, in-process scope snapshot and typed export pages for product
