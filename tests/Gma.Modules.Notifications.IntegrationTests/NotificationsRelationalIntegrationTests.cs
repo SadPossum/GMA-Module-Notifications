@@ -156,6 +156,8 @@ public sealed class NotificationsRelationalIntegrationTests
         Assert.Equal(9, await assertionDb.NotificationDeliveries.CountAsync(
             delivery => delivery.Status == DomainDeliveryStatus.Delivered));
         await AssertDeliveryRecoveryAsync(provider, sink);
+        await AssertAdmittedScopeBatchBoundaryAsync(provider);
+        await AssertSetBasedAndRawWritesAreAtomicAsync(provider);
     }
 
     [DockerFact]
@@ -191,6 +193,9 @@ public sealed class NotificationsRelationalIntegrationTests
                 CancellationToken.None));
         await AssertDeliveryRecoveryAsync(provider, sink);
         await AssertRetentionLifecycleAsync(provider);
+        await AssertConcurrentBroadcastReadIsIdempotentAsync(provider);
+        await AssertAdmittedScopeBatchBoundaryAsync(provider);
+        await AssertSetBasedAndRawWritesAreAtomicAsync(provider);
     }
 
     [DockerFact]
@@ -1083,37 +1088,7 @@ public sealed class NotificationsRelationalIntegrationTests
         await using PostgreSqlContainer postgreSql = await StartPostgreSqlAsync("notifications_receipt_tests");
         await using ServiceProvider provider = CreateProvider(postgreSql.GetConnectionString());
         await MigrateAsync(provider);
-        NotificationBroadcast broadcast = CreateBroadcast("concurrent-read");
-        await using (AsyncServiceScope seedScope = provider.CreateAsyncScope())
-        {
-            NotificationsDbContext seed = seedScope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
-            seed.NotificationBroadcasts.Add(broadcast);
-            await seed.SaveChangesAsync();
-        }
-
-        NotificationBroadcastRecipientContext recipient = NotificationBroadcastRecipientContext.Create(
-            "tenant-a",
-            ContractRecipientKind.User,
-            "user-a").Value;
-        await using AsyncServiceScope firstScope = provider.CreateAsyncScope();
-        await using AsyncServiceScope secondScope = provider.CreateAsyncScope();
-        NotificationBroadcastRepository first = new(
-            firstScope.ServiceProvider.GetRequiredService<NotificationsDbContext>(),
-            new TestIdGenerator());
-        NotificationBroadcastRepository second = new(
-            secondScope.ServiceProvider.GetRequiredService<NotificationsDbContext>(),
-            new TestIdGenerator());
-
-        bool[] results = await Task.WhenAll(
-            first.MarkReadAsync(broadcast.Id, recipient, Now, CancellationToken.None),
-            second.MarkReadAsync(broadcast.Id, recipient, Now, CancellationToken.None));
-
-        Assert.All(results, Assert.True);
-        await using AsyncServiceScope assertionScope = provider.CreateAsyncScope();
-        Assert.Equal(1, await assertionScope.ServiceProvider
-            .GetRequiredService<NotificationsDbContext>()
-            .NotificationBroadcastReads
-            .CountAsync());
+        await AssertConcurrentBroadcastReadIsIdempotentAsync(provider);
     }
 
     [DockerFact]
@@ -1684,22 +1659,30 @@ public sealed class NotificationsRelationalIntegrationTests
     private static Guid StableId(int value) =>
         Guid.Parse($"00000000-0000-0000-0000-{value:000000000000}");
 
-    private static ServiceProvider CreateProvider(string connectionString)
+    private static ServiceProvider CreateProvider(
+        string connectionString,
+        bool scopeFilterEnabled = true)
     {
         ServiceCollection services = new();
         services.AddMetrics();
-        services.AddSingleton<IScopeContext>(new TestScopeContext("tenant-a"));
+        services.AddSingleton<IScopeContext>(scopeFilterEnabled
+            ? new TestScopeContext("tenant-a")
+            : new DisabledScopeContext());
         services.AddDbContext<NotificationsDbContext>(options => options.UseNpgsql(
             connectionString,
             provider => provider.MigrationsAssembly(NotificationsMigrations.PostgreSqlAssembly)));
         return services.BuildServiceProvider(validateScopes: true);
     }
 
-    private static ServiceProvider CreateSqlServerProvider(string connectionString)
+    private static ServiceProvider CreateSqlServerProvider(
+        string connectionString,
+        bool scopeFilterEnabled = true)
     {
         ServiceCollection services = new();
         services.AddMetrics();
-        services.AddSingleton<IScopeContext>(new TestScopeContext("tenant-a"));
+        services.AddSingleton<IScopeContext>(scopeFilterEnabled
+            ? new TestScopeContext("tenant-a")
+            : new DisabledScopeContext());
         services.AddDbContext<NotificationsDbContext>(options => options.UseSqlServer(
             connectionString,
             provider => provider.MigrationsAssembly(NotificationsMigrations.SqlServerAssembly)));
@@ -1724,6 +1707,462 @@ public sealed class NotificationsRelationalIntegrationTests
             .NotificationScopeStates
             .Select(state => state.Version)
             .SingleAsync();
+    }
+
+    private static async Task AssertConcurrentBroadcastReadIsIdempotentAsync(
+        ServiceProvider provider)
+    {
+        NotificationBroadcast broadcast = CreateBroadcast(
+            $"concurrent-read-{Guid.NewGuid():N}");
+        await using (AsyncServiceScope seedScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationsDbContext seed = seedScope.ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            seed.NotificationBroadcasts.Add(broadcast);
+            await seed.SaveChangesAsync();
+        }
+        long initialVersion = await ScopeVersionAsync(provider);
+
+        NotificationBroadcastRecipientContext recipient =
+            NotificationBroadcastRecipientContext.Create(
+                "tenant-a",
+                ContractRecipientKind.User,
+                $"concurrent-user-{Guid.NewGuid():N}").Value;
+        await using AsyncServiceScope firstScope = provider.CreateAsyncScope();
+        await using AsyncServiceScope secondScope = provider.CreateAsyncScope();
+        NotificationsDbContext firstDbContext = firstScope.ServiceProvider
+            .GetRequiredService<NotificationsDbContext>();
+        NotificationsDbContext secondDbContext = secondScope.ServiceProvider
+            .GetRequiredService<NotificationsDbContext>();
+        NotificationBroadcastRepository first = new(
+            firstDbContext,
+            new TestIdGenerator());
+        NotificationBroadcastRepository second = new(
+            secondDbContext,
+            new TestIdGenerator());
+        NotificationsUnitOfWork firstUnitOfWork = new(firstDbContext);
+        NotificationsUnitOfWork secondUnitOfWork = new(secondDbContext);
+        await Task.WhenAll(
+            firstUnitOfWork.BeginTransactionAsync(),
+            secondUnitOfWork.BeginTransactionAsync());
+
+        bool[] results = await Task.WhenAll(
+            MarkReadAndCommitAsync(
+                first,
+                firstUnitOfWork,
+                broadcast.Id,
+                recipient),
+            MarkReadAndCommitAsync(
+                second,
+                secondUnitOfWork,
+                broadcast.Id,
+                recipient));
+
+        Assert.All(results, Assert.True);
+        await using AsyncServiceScope assertionScope =
+            provider.CreateAsyncScope();
+        NotificationsDbContext assertionDbContext = assertionScope
+            .ServiceProvider
+            .GetRequiredService<NotificationsDbContext>();
+        Assert.Equal(
+            1,
+            await assertionDbContext.NotificationBroadcastReads.CountAsync(
+                read => read.BroadcastId == broadcast.Id));
+        Assert.Equal(
+            initialVersion + 1,
+            (await assertionDbContext.NotificationScopeStates.SingleAsync())
+            .Version);
+    }
+
+    private static async Task AssertAdmittedScopeBatchBoundaryAsync(
+        ServiceProvider provider)
+    {
+        const int scopeCount = 501;
+        string scopePrefix = $"atomic-scale-{Guid.NewGuid():N}-";
+        string historyUserId = $"atomic-scale-user-{Guid.NewGuid():N}";
+        string connectionString;
+        bool isSqlServer;
+        await using (AsyncServiceScope providerScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationsDbContext providerDbContext = providerScope
+                .ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            connectionString = providerDbContext.Database
+                .GetConnectionString()!;
+            isSqlServer = providerDbContext.Database.IsSqlServer();
+        }
+
+        await using ServiceProvider unscopedProvider = isSqlServer
+            ? CreateSqlServerProvider(
+                connectionString,
+                scopeFilterEnabled: false)
+            : CreateProvider(
+                connectionString,
+                scopeFilterEnabled: false);
+        await using (AsyncServiceScope seedScope =
+                     unscopedProvider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext = seedScope.ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            UserNotification[] notifications = Enumerable.Range(0, scopeCount)
+                .Select(index => UserNotification.Create(
+                    Guid.CreateVersion7(),
+                    $"{scopePrefix}{index:D4}",
+                    historyUserId,
+                    "notifications-tests",
+                    $"atomic-scale-{index:D4}",
+                    1,
+                    "Atomic scale notification",
+                    null,
+                    DomainSeverity.Info,
+                    Now,
+                    Now,
+                    "{}").Value)
+                .ToArray();
+            foreach (UserNotification notification in notifications)
+            {
+                await AddNotificationAsync(dbContext, notification);
+            }
+            await dbContext.SaveChangesAsync();
+        }
+
+        Dictionary<string, long> initialVersions;
+        await using (AsyncServiceScope initialAssertionScope =
+                     unscopedProvider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext = initialAssertionScope
+                .ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            initialVersions = await dbContext.NotificationScopeStates
+                .Where(state => state.ScopeId.StartsWith(scopePrefix))
+                .ToDictionaryAsync(
+                    state => state.ScopeId,
+                    state => state.Version);
+            Assert.Equal(scopeCount, initialVersions.Count);
+        }
+
+        await using (AsyncServiceScope mutationScope =
+                     unscopedProvider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext = mutationScope.ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            NotificationsUnitOfWork unitOfWork = new(dbContext);
+            await unitOfWork.BeginTransactionAsync();
+            Assert.Equal(
+                scopeCount,
+                await new NotificationHistoryRepository(dbContext)
+                    .MarkAllReadAsync(
+                        AccessSubject.User(historyUserId),
+                        scopeId: null,
+                        Now.AddMinutes(2),
+                        CancellationToken.None));
+            await unitOfWork.SaveChangesAsync(CancellationToken.None);
+            await unitOfWork.CommitTransactionAsync();
+        }
+
+        await using AsyncServiceScope finalAssertionScope =
+            unscopedProvider.CreateAsyncScope();
+        NotificationsDbContext finalDbContext = finalAssertionScope
+            .ServiceProvider
+            .GetRequiredService<NotificationsDbContext>();
+        Assert.Equal(
+            scopeCount,
+            await finalDbContext.UserNotifications.CountAsync(notification =>
+                notification.ScopeId.StartsWith(scopePrefix) &&
+                notification.ReadAtUtc != null));
+        NotificationScopeState[] finalStates = await finalDbContext
+            .NotificationScopeStates
+            .Where(state => state.ScopeId.StartsWith(scopePrefix))
+            .ToArrayAsync();
+        Assert.Equal(scopeCount, finalStates.Length);
+        Assert.All(
+            finalStates,
+            state => Assert.Equal(
+                initialVersions[state.ScopeId] + 1,
+                state.Version));
+    }
+
+    private static async Task<bool> MarkReadAndCommitAsync(
+        NotificationBroadcastRepository repository,
+        NotificationsUnitOfWork unitOfWork,
+        Guid broadcastId,
+        NotificationBroadcastRecipientContext recipient)
+    {
+        try
+        {
+            bool result = await repository.MarkReadAsync(
+                broadcastId,
+                recipient,
+                Now,
+                CancellationToken.None);
+            await unitOfWork.SaveChangesAsync(CancellationToken.None);
+            await unitOfWork.CommitTransactionAsync();
+            return result;
+        }
+        catch
+        {
+            await unitOfWork.RollbackTransactionAsync(
+                CancellationToken.None);
+            throw;
+        }
+    }
+
+    private static async Task AssertSetBasedAndRawWritesAreAtomicAsync(
+        ServiceProvider provider)
+    {
+        const string historyUserId = "atomic-history-user";
+        Guid notificationId = Guid.CreateVersion7();
+        NotificationBroadcast openBroadcast = CreateBroadcast(
+            $"atomic-open-{Guid.NewGuid():N}");
+        NotificationBroadcast closedBroadcast = CreateBroadcast(
+            $"atomic-closed-{Guid.NewGuid():N}");
+        await using (AsyncServiceScope seedScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext = seedScope.ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            await AddNotificationAsync(
+                dbContext,
+                UserNotification.Create(
+                    notificationId,
+                    "tenant-a",
+                    historyUserId,
+                    "notifications-tests",
+                    $"atomic-history-{Guid.NewGuid():N}",
+                    1,
+                    "Atomic history notification",
+                    null,
+                    DomainSeverity.Info,
+                    Now,
+                    Now,
+                    "{}").Value);
+            dbContext.NotificationBroadcasts.AddRange(
+                openBroadcast,
+                closedBroadcast);
+            await dbContext.SaveChangesAsync();
+        }
+
+        long initialVersion = await ScopeVersionAsync(provider);
+
+        await using (AsyncServiceScope rollbackHistoryScope =
+                     provider.CreateAsyncScope())
+        {
+            using CancellationTokenSource cancellation = new();
+            NotificationsDbContext dbContext = rollbackHistoryScope
+                .ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            NotificationsUnitOfWork unitOfWork = new(dbContext);
+            await unitOfWork.BeginTransactionAsync();
+            try
+            {
+                Assert.Equal(
+                    1,
+                    await new NotificationHistoryRepository(dbContext)
+                        .MarkAllReadAsync(
+                            AccessSubject.User(historyUserId),
+                            "tenant-a",
+                            Now.AddMinutes(3),
+                            CancellationToken.None));
+                cancellation.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                    () => unitOfWork.SaveChangesAsync(cancellation.Token));
+            }
+            finally
+            {
+                await unitOfWork.RollbackTransactionAsync(
+                    CancellationToken.None);
+            }
+        }
+
+        await using (AsyncServiceScope rollbackBroadcastScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext = rollbackBroadcastScope
+                .ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            NotificationsUnitOfWork unitOfWork = new(dbContext);
+            await unitOfWork.BeginTransactionAsync();
+            Assert.True(await new NotificationBroadcastRepository(
+                    dbContext,
+                    new TestIdGenerator())
+                .MarkReadAsync(
+                    openBroadcast.Id,
+                    NotificationBroadcastRecipientContext.Create(
+                        "tenant-a",
+                        ContractRecipientKind.User,
+                        "atomic-rollback-user").Value,
+                    Now.AddMinutes(3),
+                    CancellationToken.None));
+            await unitOfWork.SaveChangesAsync(CancellationToken.None);
+            await unitOfWork.RollbackTransactionAsync(
+                CancellationToken.None);
+        }
+
+        await using (AsyncServiceScope rollbackAssertionScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext = rollbackAssertionScope
+                .ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            Assert.Null((await dbContext.UserNotifications
+                .SingleAsync(notification => notification.Id == notificationId))
+                .ReadAtUtc);
+            Assert.False(await dbContext.NotificationBroadcastReads
+                .AnyAsync(read => read.BroadcastId == openBroadcast.Id));
+            Assert.Equal(
+                initialVersion,
+                (await dbContext.NotificationScopeStates.SingleAsync())
+                .Version);
+        }
+
+        await using (AsyncServiceScope commitHistoryScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext = commitHistoryScope
+                .ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            NotificationsUnitOfWork unitOfWork = new(dbContext);
+            await unitOfWork.BeginTransactionAsync();
+            Assert.Equal(
+                1,
+                await new NotificationHistoryRepository(dbContext)
+                    .MarkAllReadAsync(
+                        AccessSubject.User(historyUserId),
+                        "tenant-a",
+                        Now.AddMinutes(4),
+                        CancellationToken.None));
+            await unitOfWork.SaveChangesAsync(CancellationToken.None);
+            await unitOfWork.CommitTransactionAsync();
+        }
+
+        await using (AsyncServiceScope commitBroadcastScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext = commitBroadcastScope
+                .ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            NotificationsUnitOfWork unitOfWork = new(dbContext);
+            await unitOfWork.BeginTransactionAsync();
+            Assert.True(await new NotificationBroadcastRepository(
+                    dbContext,
+                    new TestIdGenerator())
+                .MarkReadAsync(
+                    openBroadcast.Id,
+                    NotificationBroadcastRecipientContext.Create(
+                        "tenant-a",
+                        ContractRecipientKind.User,
+                        "atomic-commit-user").Value,
+                    Now.AddMinutes(4),
+                    CancellationToken.None));
+            await unitOfWork.SaveChangesAsync(CancellationToken.None);
+            await unitOfWork.CommitTransactionAsync();
+        }
+
+        long versionAfterCommits = await ScopeVersionAsync(provider);
+        Assert.Equal(initialVersion + 2, versionAfterCommits);
+
+        long closedVersion = versionAfterCommits + 1;
+        await using (AsyncServiceScope racingWriteScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext = racingWriteScope
+                .ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            NotificationsUnitOfWork unitOfWork = new(dbContext);
+            await unitOfWork.BeginTransactionAsync();
+            try
+            {
+                Assert.True(await new NotificationBroadcastRepository(
+                        dbContext,
+                        new TestIdGenerator())
+                    .MarkReadAsync(
+                        closedBroadcast.Id,
+                        NotificationBroadcastRecipientContext.Create(
+                            "tenant-a",
+                            ContractRecipientKind.User,
+                            "atomic-race-user").Value,
+                        Now.AddMinutes(5),
+                        CancellationToken.None));
+
+                await using (AsyncServiceScope closeScope =
+                             provider.CreateAsyncScope())
+                {
+                    NotificationsDbContext closeDbContext = closeScope
+                        .ServiceProvider
+                        .GetRequiredService<NotificationsDbContext>();
+                    NotificationScopeState state = await closeDbContext
+                        .NotificationScopeStates
+                        .SingleAsync();
+                    Assert.Equal(
+                        NotificationScopeCloseTransition.Completed,
+                        state.Close(
+                            StableId(903),
+                            new string('e', 64),
+                            Now.AddMinutes(5)));
+                    await closeDbContext.SaveChangesAsync();
+                    Assert.Equal(closedVersion, state.Version);
+                }
+
+                await Assert.ThrowsAsync<NotificationScopeClosedException>(
+                    () => unitOfWork.SaveChangesAsync(
+                        CancellationToken.None));
+            }
+            finally
+            {
+                await unitOfWork.RollbackTransactionAsync(
+                    CancellationToken.None);
+            }
+        }
+
+        await using (AsyncServiceScope closedWriteScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationsDbContext dbContext = closedWriteScope
+                .ServiceProvider
+                .GetRequiredService<NotificationsDbContext>();
+            NotificationsUnitOfWork unitOfWork = new(dbContext);
+            await unitOfWork.BeginTransactionAsync();
+            try
+            {
+                await Assert.ThrowsAsync<NotificationScopeClosedException>(
+                    () => new NotificationBroadcastRepository(
+                            dbContext,
+                            new TestIdGenerator())
+                        .MarkReadAsync(
+                            closedBroadcast.Id,
+                            NotificationBroadcastRecipientContext.Create(
+                                "tenant-a",
+                                ContractRecipientKind.User,
+                                "atomic-closed-user").Value,
+                            Now.AddMinutes(6),
+                            CancellationToken.None));
+            }
+            finally
+            {
+                await unitOfWork.RollbackTransactionAsync(
+                    CancellationToken.None);
+            }
+        }
+
+        await using AsyncServiceScope finalAssertionScope =
+            provider.CreateAsyncScope();
+        NotificationsDbContext finalDbContext = finalAssertionScope
+            .ServiceProvider
+            .GetRequiredService<NotificationsDbContext>();
+        Assert.NotNull((await finalDbContext.UserNotifications
+            .SingleAsync(notification => notification.Id == notificationId))
+            .ReadAtUtc);
+        Assert.True(await finalDbContext.NotificationBroadcastReads
+            .AnyAsync(read => read.BroadcastId == openBroadcast.Id));
+        Assert.False(await finalDbContext.NotificationBroadcastReads
+            .AnyAsync(read => read.BroadcastId == closedBroadcast.Id));
+        NotificationScopeState finalState = await finalDbContext
+            .NotificationScopeStates
+            .SingleAsync();
+        Assert.True(finalState.IsClosed);
+        Assert.Equal(closedVersion, finalState.Version);
     }
 
     private static async Task MigrateWithLegacyRecipientBackfillAsync(
@@ -2263,5 +2702,11 @@ public sealed class NotificationsRelationalIntegrationTests
         public bool HasScope => !string.IsNullOrWhiteSpace(scopeId);
         public string? ScopeId => scopeId;
         public string RequireScopeId() => scopeId;
+    }
+
+    private sealed class DisabledScopeContext : IScopeContext
+    {
+        public bool IsEnabled => false;
+        public string? ScopeId => null;
     }
 }
