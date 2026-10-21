@@ -66,10 +66,10 @@ public sealed class NotificationScopeAdmissionTests
     [Fact]
     public async Task Module_worker_versions_each_open_scope_in_one_save()
     {
-        await using NotificationsDbContext dbContext = CreateDbContext(
-            $"notification-scope-{Guid.NewGuid():N}",
-            new InMemoryDatabaseRoot(),
-            new DisabledScopeContext());
+        await using NotificationsDbContext dbContext =
+            CreateMaintenanceDbContext(
+                $"notification-scope-{Guid.NewGuid():N}",
+                new InMemoryDatabaseRoot());
         dbContext.NotificationPreferences.AddRange(
             CreatePreference("tenant-a", enabled: true),
             CreatePreference("tenant-b", enabled: true));
@@ -92,16 +92,43 @@ public sealed class NotificationScopeAdmissionTests
                 Assert.Equal("tenant-b", state.ScopeId);
                 Assert.Equal(1, state.Version);
             });
+
+        foreach (NotificationPreference preference in
+                 dbContext.NotificationPreferences.Local)
+        {
+            preference.SetEnabled(enabled: false, Now.AddMinutes(1));
+        }
+
+        await dbContext.SaveChangesAsync();
+
+        Assert.All(states, state => Assert.Equal(2, state.Version));
     }
 
     [Fact]
-    public async Task Closed_scope_rejects_tracked_mutation()
+    public async Task Request_context_without_an_active_scope_rejects_scoped_mutation()
+    {
+        await using NotificationsDbContext dbContext = CreateDbContext(
+            $"notification-scope-{Guid.NewGuid():N}",
+            new InMemoryDatabaseRoot(),
+            new TestScopeContext(scopeId: null));
+        dbContext.NotificationPreferences.Add(CreatePreference(enabled: true));
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<
+            InvalidOperationException>(() => dbContext.SaveChangesAsync());
+
+        Assert.Equal(
+            "A notification mutation requires a valid admitted scope.",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task Maintenance_context_rejects_closed_scope_mutation()
     {
         InMemoryDatabaseRoot root = new();
         string databaseName = $"notification-scope-{Guid.NewGuid():N}";
         await SeedClosedStateAsync(databaseName, root);
         await using NotificationsDbContext dbContext =
-            CreateDbContext(databaseName, root);
+            CreateMaintenanceDbContext(databaseName, root);
         dbContext.NotificationPreferences.Add(CreatePreference(enabled: true));
 
         await Assert.ThrowsAsync<NotificationScopeClosedException>(
@@ -218,16 +245,29 @@ public sealed class NotificationScopeAdmissionTests
         InMemoryDatabaseRoot root,
         IScopeContext? scopeContext = null)
     {
-        DbContextOptions<NotificationsDbContext> options =
-            new DbContextOptionsBuilder<NotificationsDbContext>()
-                .UseInMemoryDatabase(databaseName, root)
-                .ConfigureWarnings(warnings => warnings.Ignore(
-                    InMemoryEventId.TransactionIgnoredWarning))
-                .Options;
+        DbContextOptions<NotificationsDbContext> options = CreateOptions(
+            databaseName,
+            root);
         return new NotificationsDbContext(
             options,
             scopeContext ?? new TestScopeContext());
     }
+
+    private static NotificationsDbContext CreateMaintenanceDbContext(
+        string databaseName,
+        InMemoryDatabaseRoot root) =>
+        new NotificationMaintenanceDbContextFactory(
+                CreateOptions(databaseName, root))
+            .CreateDbContext();
+
+    private static DbContextOptions<NotificationsDbContext> CreateOptions(
+        string databaseName,
+        InMemoryDatabaseRoot root) =>
+        new DbContextOptionsBuilder<NotificationsDbContext>()
+            .UseInMemoryDatabase(databaseName, root)
+            .ConfigureWarnings(warnings => warnings.Ignore(
+                InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
 
     private sealed class FixedClock : ISystemClock
     {
@@ -239,15 +279,9 @@ public sealed class NotificationScopeAdmissionTests
         public Guid NewId() => Guid.CreateVersion7();
     }
 
-    private sealed class TestScopeContext : IScopeContext
+    private sealed class TestScopeContext(string? scopeId = "tenant-a") : IScopeContext
     {
         public bool IsEnabled => true;
-        public string? ScopeId => "tenant-a";
-    }
-
-    private sealed class DisabledScopeContext : IScopeContext
-    {
-        public bool IsEnabled => false;
-        public string? ScopeId => null;
+        public string? ScopeId => scopeId;
     }
 }

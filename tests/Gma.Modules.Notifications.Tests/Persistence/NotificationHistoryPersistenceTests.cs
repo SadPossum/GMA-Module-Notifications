@@ -24,6 +24,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Xunit;
 using ContractNotificationSeverity = Notifications.Contracts.NotificationSeverity;
 using DomainBroadcastAudience = Domain.ValueObjects.NotificationBroadcastAudience;
@@ -39,6 +41,49 @@ using FrameworkNotificationSeverity = Framework.Notifications.NotificationSeveri
 public sealed class NotificationHistoryPersistenceTests
 {
     private static readonly DateTimeOffset Now = new(2026, 7, 4, 12, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task Persistence_keeps_request_and_maintenance_scope_contexts_isolated()
+    {
+        using IHost host = BuildHost(enabled: false, scopeId: "tenant-a");
+        await using AsyncServiceScope scope = host.Services.CreateAsyncScope();
+        NotificationsDbContext requestDbContext = scope.ServiceProvider
+            .GetRequiredService<NotificationsDbContext>();
+        NotificationMaintenanceDbContextFactory maintenanceFactory =
+            scope.ServiceProvider
+                .GetRequiredService<NotificationMaintenanceDbContextFactory>();
+        await using NotificationsDbContext maintenanceDbContext =
+            maintenanceFactory.CreateDbContext();
+
+        Assert.True(requestDbContext.ScopeFilterEnabled);
+        Assert.Equal("tenant-a", requestDbContext.CurrentScopeId);
+        Assert.False(maintenanceDbContext.ScopeFilterEnabled);
+        Assert.Equal(string.Empty, maintenanceDbContext.CurrentScopeId);
+    }
+
+    [Fact]
+    public async Task Persistence_maintenance_factory_reuses_custom_context_options()
+    {
+        using IHost host = BuildHost(
+            enabled: false,
+            scopeId: "tenant-a",
+            useCustomContextRegistration: true);
+        await using AsyncServiceScope scope = host.Services.CreateAsyncScope();
+        NotificationsDbContext requestDbContext = scope.ServiceProvider
+            .GetRequiredService<NotificationsDbContext>();
+        NotificationMaintenanceDbContextFactory maintenanceFactory =
+            scope.ServiceProvider
+                .GetRequiredService<NotificationMaintenanceDbContextFactory>();
+        await using NotificationsDbContext maintenanceDbContext =
+            maintenanceFactory.CreateDbContext();
+
+        Assert.NotSame(requestDbContext, maintenanceDbContext);
+        Assert.Equal(
+            requestDbContext.Database.ProviderName,
+            maintenanceDbContext.Database.ProviderName);
+        Assert.True(requestDbContext.ScopeFilterEnabled);
+        Assert.False(maintenanceDbContext.ScopeFilterEnabled);
+    }
 
     [Fact]
     public async Task Publisher_persists_history_when_live_notifications_are_disabled()
@@ -702,11 +747,108 @@ public sealed class NotificationHistoryPersistenceTests
         Assert.Equal(deliveredAttempt.Id, Assert.Single(expiredAttempts).Id);
     }
 
-    private static IHost BuildHost(bool enabled, string scopeId)
+    [Fact]
+    public async Task Retention_worker_processes_multiple_scopes_without_an_active_request_scope()
+    {
+        using IHost host = BuildHost(enabled: false, scopeId: "tenant-a");
+        TestTenantContext tenantContext = Assert.IsType<TestTenantContext>(
+            host.Services.GetRequiredService<IScopeContextAccessor>());
+        DateTimeOffset old = Now.AddDays(-400);
+        Guid firstNotificationId = Guid.CreateVersion7();
+        Guid secondNotificationId = Guid.CreateVersion7();
+        long[] versionsBeforeCleanup;
+
+        await using (AsyncServiceScope seedScope =
+                     host.Services.CreateAsyncScope())
+        {
+            NotificationMaintenanceDbContextFactory dbContextFactory =
+                seedScope.ServiceProvider
+                    .GetRequiredService<NotificationMaintenanceDbContextFactory>();
+            await using NotificationsDbContext dbContext =
+                dbContextFactory.CreateDbContext();
+            dbContext.UserNotifications.AddRange(
+                UserNotification.Create(
+                    firstNotificationId,
+                    "tenant-a",
+                    "user-a",
+                    "catalog",
+                    "catalog.item-updated",
+                    1,
+                    "Old open notification",
+                    null,
+                    DomainNotificationSeverity.Info,
+                    old,
+                    old,
+                    "{}").Value,
+                UserNotification.Create(
+                    secondNotificationId,
+                    "tenant-b",
+                    "user-b",
+                    "catalog",
+                    "catalog.item-updated",
+                    1,
+                    "Old second notification",
+                    null,
+                    DomainNotificationSeverity.Info,
+                    old,
+                    old,
+                    "{}").Value);
+            await dbContext.SaveChangesAsync();
+            versionsBeforeCleanup = await dbContext.NotificationScopeStates
+                .OrderBy(state => state.ScopeId)
+                .Select(state => state.Version)
+                .ToArrayAsync();
+        }
+
+        tenantContext.ClearScope();
+        NotificationRetentionService worker = new(
+            host.Services.GetRequiredService<IServiceScopeFactory>(),
+            new FixedClock(),
+            Options.Create(new NotificationRetentionOptions()),
+            Options.Create(new NotificationDeliveryOptions()),
+            NullLogger<NotificationRetentionService>.Instance);
+
+        await worker.CleanupAsync(CancellationToken.None);
+
+        await using AsyncServiceScope assertionScope =
+            host.Services.CreateAsyncScope();
+        NotificationsDbContext assertionDb = assertionScope.ServiceProvider
+            .GetRequiredService<NotificationsDbContext>();
+        Guid[] remainingNotificationIds = await assertionDb.UserNotifications
+            .IgnoreQueryFilters()
+            .Select(notification => notification.Id)
+            .ToArrayAsync();
+        NotificationScopeState[] states = await assertionDb
+            .NotificationScopeStates
+            .IgnoreQueryFilters()
+            .OrderBy(state => state.ScopeId)
+            .ToArrayAsync();
+        Assert.Empty(remainingNotificationIds);
+        Assert.Collection(
+            states,
+            state =>
+            {
+                Assert.Equal("tenant-a", state.ScopeId);
+                Assert.Equal(versionsBeforeCleanup[0] + 1, state.Version);
+                Assert.False(state.IsClosed);
+            },
+            state =>
+            {
+                Assert.Equal("tenant-b", state.ScopeId);
+                Assert.Equal(versionsBeforeCleanup[1] + 1, state.Version);
+                Assert.False(state.IsClosed);
+            });
+    }
+
+    private static IHost BuildHost(
+        bool enabled,
+        string scopeId,
+        bool useCustomContextRegistration = false)
     {
         HostApplicationBuilder builder = Host.CreateApplicationBuilder();
         TestTenantContext tenantContext = new(scopeId);
         InMemoryDatabaseRoot databaseRoot = new();
+        string databaseName = $"notifications-{Guid.NewGuid():N}";
 
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -720,8 +862,20 @@ public sealed class NotificationHistoryPersistenceTests
         builder.Services.TryAddSingleton<IIdGenerator, TestIdGenerator>();
         builder.Services.TryAddSingleton<IScopeContext>(tenantContext);
         builder.Services.TryAddSingleton<IScopeContextAccessor>(tenantContext);
-        builder.Services.AddDbContext<NotificationsDbContext>(options =>
-            options.UseInMemoryDatabase($"notifications-{Guid.NewGuid():N}", databaseRoot));
+        if (useCustomContextRegistration)
+        {
+            DbContextOptions<NotificationsDbContext> options =
+                new DbContextOptionsBuilder<NotificationsDbContext>()
+                    .UseInMemoryDatabase(databaseName, databaseRoot)
+                    .Options;
+            builder.Services.AddScoped(_ =>
+                new NotificationsDbContext(options, tenantContext));
+        }
+        else
+        {
+            builder.Services.AddDbContext<NotificationsDbContext>(options =>
+                options.UseInMemoryDatabase(databaseName, databaseRoot));
+        }
 
         builder.AddUserNotificationsInfrastructure();
         builder.AddUserNotificationsRealtime();

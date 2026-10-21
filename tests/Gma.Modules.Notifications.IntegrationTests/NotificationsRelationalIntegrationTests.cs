@@ -116,6 +116,7 @@ public sealed class NotificationsRelationalIntegrationTests
         await MigrateAsync(provider);
 
         await AssertRetentionLifecycleAsync(provider);
+        await AssertMaintenanceRetentionWorkerAsync(provider);
     }
 
     [DockerFact]
@@ -124,7 +125,12 @@ public sealed class NotificationsRelationalIntegrationTests
         await using PostgreSqlContainer postgreSql = await StartPostgreSqlAsync("notifications_delivery_tests");
         await using ServiceProvider provider = CreateProvider(postgreSql.GetConnectionString());
         await MigrateAsync(provider);
-        await SeedDeliveriesAsync(provider, count: 9);
+        Guid closedDeliveryId = await SeedDeliveriesAsync(
+            provider,
+            count: 9);
+        TestScopeContext scopeContext = Assert.IsType<TestScopeContext>(
+            provider.GetRequiredService<IScopeContext>());
+        scopeContext.ClearScope();
 
         TrackingDeliverySink sink = new();
         NotificationDeliveryService first = CreateWorker(provider, "worker-one", Now, sink, batchSize: 5, maxConcurrency: 2);
@@ -151,10 +157,11 @@ public sealed class NotificationsRelationalIntegrationTests
         Assert.Equal(5, processed);
         Assert.Equal(4, recoveredRemainder);
         Assert.InRange(sink.MaximumConcurrency, 1, 2);
-        await using AsyncServiceScope assertionScope = provider.CreateAsyncScope();
-        NotificationsDbContext assertionDb = assertionScope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
-        Assert.Equal(9, await assertionDb.NotificationDeliveries.CountAsync(
-            delivery => delivery.Status == DomainDeliveryStatus.Delivered));
+        scopeContext.SetScope("tenant-a");
+        await AssertCrossScopeDeliveryBatchAsync(
+            provider,
+            expectedDeliveredCount: 9,
+            closedDeliveryId);
         await AssertDeliveryRecoveryAsync(provider, sink);
     }
 
@@ -165,7 +172,12 @@ public sealed class NotificationsRelationalIntegrationTests
         await sqlServer.StartAsync();
         await using ServiceProvider provider = CreateSqlServerProvider(sqlServer.GetConnectionString());
         await MigrateWithLegacyRecipientBackfillAsync(provider);
-        await SeedDeliveriesAsync(provider, count: 4);
+        Guid closedDeliveryId = await SeedDeliveriesAsync(
+            provider,
+            count: 4);
+        TestScopeContext scopeContext = Assert.IsType<TestScopeContext>(
+            provider.GetRequiredService<IScopeContext>());
+        scopeContext.ClearScope();
 
         TrackingDeliverySink sink = new();
         NotificationDeliveryService first = CreateWorker(provider, "sql-worker-one", Now, sink, batchSize: 2, maxConcurrency: 2);
@@ -189,6 +201,11 @@ public sealed class NotificationsRelationalIntegrationTests
             4,
             await recovery.ProcessAvailableBatchAsync(
                 CancellationToken.None));
+        scopeContext.SetScope("tenant-a");
+        await AssertCrossScopeDeliveryBatchAsync(
+            provider,
+            expectedDeliveredCount: 4,
+            closedDeliveryId);
         await AssertDeliveryRecoveryAsync(provider, sink);
         await AssertRetentionLifecycleAsync(provider);
     }
@@ -1692,6 +1709,7 @@ public sealed class NotificationsRelationalIntegrationTests
         services.AddDbContext<NotificationsDbContext>(options => options.UseNpgsql(
             connectionString,
             provider => provider.MigrationsAssembly(NotificationsMigrations.PostgreSqlAssembly)));
+        services.AddScoped<NotificationMaintenanceDbContextFactory>();
         return services.BuildServiceProvider(validateScopes: true);
     }
 
@@ -1703,6 +1721,7 @@ public sealed class NotificationsRelationalIntegrationTests
         services.AddDbContext<NotificationsDbContext>(options => options.UseSqlServer(
             connectionString,
             provider => provider.MigrationsAssembly(NotificationsMigrations.SqlServerAssembly)));
+        services.AddScoped<NotificationMaintenanceDbContextFactory>();
         return services.BuildServiceProvider(validateScopes: true);
     }
 
@@ -1846,16 +1865,26 @@ public sealed class NotificationsRelationalIntegrationTests
             scope.ServiceProvider.GetRequiredService<IScopeContext>(),
             new FixedClock(nowUtc));
 
-    private static async Task SeedDeliveriesAsync(ServiceProvider provider, int count)
+    private static async Task<Guid> SeedDeliveriesAsync(
+        ServiceProvider provider,
+        int count)
     {
         await using AsyncServiceScope scope = provider.CreateAsyncScope();
-        NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
+        NotificationMaintenanceDbContextFactory dbContextFactory =
+            scope.ServiceProvider
+                .GetRequiredService<NotificationMaintenanceDbContextFactory>();
+        await using NotificationsDbContext dbContext =
+            dbContextFactory.CreateDbContext();
         for (int index = 0; index < count; index++)
         {
-            UserNotification notification = CreateNotification($"user-{index}", $"delivery-{index}");
+            string scopeId = index % 2 == 0 ? "tenant-a" : "tenant-b";
+            UserNotification notification = CreateScopedNotification(
+                scopeId,
+                $"user-{index}",
+                $"delivery-{index}");
             NotificationDelivery delivery = NotificationDelivery.CreatePending(
                 Guid.CreateVersion7(),
-                "tenant-a",
+                scopeId,
                 notification.Id,
                 NotificationTags.Email,
                 TrackingDeliverySink.Provider,
@@ -1865,6 +1894,66 @@ public sealed class NotificationsRelationalIntegrationTests
         }
 
         await dbContext.SaveChangesAsync();
+        UserNotification closedNotification = CreateScopedNotification(
+            "tenant-closed",
+            "closed-user",
+            $"closed-delivery-{Guid.NewGuid():N}");
+        Guid closedDeliveryId = Guid.CreateVersion7();
+        await AddNotificationAsync(dbContext, closedNotification);
+        dbContext.NotificationDeliveries.Add(
+            NotificationDelivery.CreatePending(
+                closedDeliveryId,
+                closedNotification.ScopeId,
+                closedNotification.Id,
+                NotificationTags.Email,
+                TrackingDeliverySink.Provider,
+                Now).Value);
+        await dbContext.SaveChangesAsync();
+        NotificationScopeState closedState = await dbContext
+            .NotificationScopeStates
+            .SingleAsync(state => state.ScopeId == closedNotification.ScopeId);
+        Assert.Equal(
+            NotificationScopeCloseTransition.Completed,
+            closedState.Close(
+                StableId(902),
+                new string('d', 64),
+                Now.AddSeconds(1)));
+        await dbContext.SaveChangesAsync();
+        return closedDeliveryId;
+    }
+
+    private static async Task AssertCrossScopeDeliveryBatchAsync(
+        ServiceProvider provider,
+        int expectedDeliveredCount,
+        Guid closedDeliveryId)
+    {
+        await using AsyncServiceScope assertionScope =
+            provider.CreateAsyncScope();
+        NotificationMaintenanceDbContextFactory dbContextFactory =
+            assertionScope.ServiceProvider
+                .GetRequiredService<NotificationMaintenanceDbContextFactory>();
+        await using NotificationsDbContext dbContext =
+            dbContextFactory.CreateDbContext();
+        NotificationDelivery[] delivered = await dbContext
+            .NotificationDeliveries
+            .Where(delivery =>
+                delivery.Status == DomainDeliveryStatus.Delivered)
+            .ToArrayAsync();
+        NotificationDelivery closedDelivery = await dbContext
+            .NotificationDeliveries
+            .SingleAsync(delivery => delivery.Id == closedDeliveryId);
+
+        Assert.Equal(expectedDeliveredCount, delivered.Length);
+        Assert.Equal(
+            ["tenant-a", "tenant-b"],
+            delivered
+                .Select(delivery => delivery.ScopeId)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal));
+        Assert.Equal(DomainDeliveryStatus.Pending, closedDelivery.Status);
+        Assert.Empty(await dbContext.NotificationDeliveryAttempts
+            .Where(attempt => attempt.DeliveryId == closedDeliveryId)
+            .ToArrayAsync());
     }
 
     private static async Task AssertDeliveryRecoveryAsync(
@@ -2079,6 +2168,125 @@ public sealed class NotificationsRelationalIntegrationTests
             await ReferenceVersionAsync(dbContext, completedReference));
     }
 
+    private static async Task AssertMaintenanceRetentionWorkerAsync(
+        ServiceProvider provider)
+    {
+        TestScopeContext scopeContext = Assert.IsType<TestScopeContext>(
+            provider.GetRequiredService<IScopeContext>());
+        DateTimeOffset old = Now.AddDays(-400);
+        Guid openNotificationId = Guid.CreateVersion7();
+        Guid closedNotificationId = Guid.CreateVersion7();
+        long openVersionBeforeCleanup;
+        long closedVersionBeforeCleanup;
+
+        await using (AsyncServiceScope seedScope =
+                     provider.CreateAsyncScope())
+        {
+            NotificationMaintenanceDbContextFactory dbContextFactory =
+                seedScope.ServiceProvider
+                    .GetRequiredService<NotificationMaintenanceDbContextFactory>();
+            await using NotificationsDbContext dbContext =
+                dbContextFactory.CreateDbContext();
+            UserNotification openNotification = UserNotification.Create(
+                openNotificationId,
+                "tenant-b",
+                "user-b",
+                "notifications-tests",
+                "retention-open",
+                1,
+                "Old open notification",
+                null,
+                DomainSeverity.Info,
+                old,
+                old,
+                "{}").Value;
+            UserNotification closedNotification = UserNotification.Create(
+                closedNotificationId,
+                "tenant-c",
+                "user-c",
+                "notifications-tests",
+                "retention-closed",
+                1,
+                "Old closed notification",
+                null,
+                DomainSeverity.Info,
+                old,
+                old,
+                "{}").Value;
+            await AddNotificationAsync(dbContext, openNotification);
+            await AddNotificationAsync(dbContext, closedNotification);
+            await dbContext.SaveChangesAsync();
+            NotificationScopeState closedState = await dbContext
+                .NotificationScopeStates
+                .SingleAsync(state => state.ScopeId == "tenant-c");
+            Assert.Equal(
+                NotificationScopeCloseTransition.Completed,
+                closedState.Close(
+                    StableId(901),
+                    new string('c', 64),
+                    Now));
+            await dbContext.SaveChangesAsync();
+            openVersionBeforeCleanup = await dbContext.NotificationScopeStates
+                .Where(state => state.ScopeId == "tenant-b")
+                .Select(state => state.Version)
+                .SingleAsync();
+            closedVersionBeforeCleanup = closedState.Version;
+        }
+
+        scopeContext.ClearScope();
+        try
+        {
+            NotificationRetentionService worker = new(
+                provider.GetRequiredService<IServiceScopeFactory>(),
+                new FixedClock(Now),
+                Options.Create(new NotificationRetentionOptions()),
+                Options.Create(new NotificationDeliveryOptions()),
+                NullLogger<NotificationRetentionService>.Instance);
+            await worker.CleanupAsync(CancellationToken.None);
+        }
+        finally
+        {
+            scopeContext.SetScope("tenant-a");
+        }
+
+        await using AsyncServiceScope assertionScope =
+            provider.CreateAsyncScope();
+        NotificationMaintenanceDbContextFactory assertionFactory =
+            assertionScope.ServiceProvider
+                .GetRequiredService<NotificationMaintenanceDbContextFactory>();
+        await using NotificationsDbContext assertionDb =
+            assertionFactory.CreateDbContext();
+        Guid[] remainingNotificationIds = await assertionDb.UserNotifications
+            .Where(notification =>
+                notification.ScopeId == "tenant-b" ||
+                notification.ScopeId == "tenant-c")
+            .Select(notification => notification.Id)
+            .ToArrayAsync();
+        NotificationScopeState[] states = await assertionDb
+            .NotificationScopeStates
+            .Where(state =>
+                state.ScopeId == "tenant-b" ||
+                state.ScopeId == "tenant-c")
+            .OrderBy(state => state.ScopeId)
+            .ToArrayAsync();
+        Assert.DoesNotContain(openNotificationId, remainingNotificationIds);
+        Assert.Contains(closedNotificationId, remainingNotificationIds);
+        Assert.Collection(
+            states,
+            state =>
+            {
+                Assert.Equal("tenant-b", state.ScopeId);
+                Assert.Equal(openVersionBeforeCleanup + 1, state.Version);
+                Assert.False(state.IsClosed);
+            },
+            state =>
+            {
+                Assert.Equal("tenant-c", state.ScopeId);
+                Assert.Equal(closedVersionBeforeCleanup, state.Version);
+                Assert.True(state.IsClosed);
+            });
+    }
+
     private static Task<long> ReferenceVersionAsync(
         NotificationsDbContext dbContext,
         ContractHistoryReference reference) =>
@@ -2146,6 +2354,24 @@ public sealed class NotificationsRelationalIntegrationTests
             DomainSeverity.Info,
             createdAtUtc,
             createdAtUtc,
+            "{}").Value;
+
+    private static UserNotification CreateScopedNotification(
+        string scopeId,
+        string userId,
+        string name) =>
+        UserNotification.Create(
+            Guid.CreateVersion7(),
+            scopeId,
+            userId,
+            "notifications-tests",
+            name,
+            1,
+            name,
+            null,
+            DomainSeverity.Info,
+            Now,
+            Now,
             "{}").Value;
 
     private static UserNotification CreateNotification(
@@ -2260,8 +2486,12 @@ public sealed class NotificationsRelationalIntegrationTests
     private sealed class TestScopeContext(string scopeId) : IScopeContext
     {
         public bool IsEnabled => true;
-        public bool HasScope => !string.IsNullOrWhiteSpace(scopeId);
-        public string? ScopeId => scopeId;
-        public string RequireScopeId() => scopeId;
+        public bool HasScope => !string.IsNullOrWhiteSpace(this.ScopeId);
+        public string? ScopeId { get; private set; } = scopeId;
+        public string RequireScopeId() =>
+            this.ScopeId ?? throw new InvalidOperationException();
+
+        public void SetScope(string newScopeId) => this.ScopeId = newScopeId;
+        public void ClearScope() => this.ScopeId = null;
     }
 }

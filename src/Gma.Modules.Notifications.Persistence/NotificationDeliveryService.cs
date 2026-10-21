@@ -120,7 +120,10 @@ internal sealed class NotificationDeliveryService(
         ArgumentOutOfRangeException.ThrowIfLessThan(maximumCount, 1);
 
         using IServiceScope scope = scopeFactory.CreateScope();
-        NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
+        NotificationMaintenanceDbContextFactory dbContextFactory = scope.ServiceProvider
+            .GetRequiredService<NotificationMaintenanceDbContextFactory>();
+        await using NotificationsDbContext dbContext =
+            dbContextFactory.CreateDbContext();
         DateTimeOffset nowUtc = clock.UtcNow;
         DateTimeOffset lockedUntilUtc = nowUtc.AddSeconds(options.Value.LeaseSeconds);
 
@@ -194,7 +197,10 @@ internal sealed class NotificationDeliveryService(
     internal async Task DeliverAsync(Guid deliveryId, CancellationToken stoppingToken)
     {
         using IServiceScope scope = scopeFactory.CreateScope();
-        NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
+        NotificationMaintenanceDbContextFactory dbContextFactory = scope.ServiceProvider
+            .GetRequiredService<NotificationMaintenanceDbContextFactory>();
+        await using NotificationsDbContext dbContext =
+            dbContextFactory.CreateDbContext();
         NotificationDelivery? delivery = await dbContext.NotificationDeliveries
             .IgnoreQueryFilters()
             .SingleOrDefaultAsync(
