@@ -44,7 +44,7 @@ using DomainTagOrigin = Domain.ValueObjects.NotificationTagOrigin;
 
 [Trait("Category", "Docker")]
 [Trait("Category", "Integration")]
-public sealed class NotificationsRelationalIntegrationTests
+public sealed partial class NotificationsRelationalIntegrationTests
 {
     private static readonly DateTimeOffset Now = new(2026, 7, 19, 18, 0, 0, TimeSpan.Zero);
 
@@ -1684,22 +1684,22 @@ public sealed class NotificationsRelationalIntegrationTests
     private static Guid StableId(int value) =>
         Guid.Parse($"00000000-0000-0000-0000-{value:000000000000}");
 
-    private static ServiceProvider CreateProvider(string connectionString)
+    private static ServiceProvider CreateProvider(string connectionString, string scopeId = "tenant-a")
     {
         ServiceCollection services = new();
         services.AddMetrics();
-        services.AddSingleton<IScopeContext>(new TestScopeContext("tenant-a"));
+        services.AddSingleton<IScopeContext>(new TestScopeContext(scopeId));
         services.AddDbContext<NotificationsDbContext>(options => options.UseNpgsql(
             connectionString,
             provider => provider.MigrationsAssembly(NotificationsMigrations.PostgreSqlAssembly)));
         return services.BuildServiceProvider(validateScopes: true);
     }
 
-    private static ServiceProvider CreateSqlServerProvider(string connectionString)
+    private static ServiceProvider CreateSqlServerProvider(string connectionString, string scopeId = "tenant-a")
     {
         ServiceCollection services = new();
         services.AddMetrics();
-        services.AddSingleton<IScopeContext>(new TestScopeContext("tenant-a"));
+        services.AddSingleton<IScopeContext>(new TestScopeContext(scopeId));
         services.AddDbContext<NotificationsDbContext>(options => options.UseSqlServer(
             connectionString,
             provider => provider.MigrationsAssembly(NotificationsMigrations.SqlServerAssembly)));

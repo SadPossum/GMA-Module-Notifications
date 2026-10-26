@@ -14,6 +14,13 @@ public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbConte
 {
     private const int ScopeStateQueryBatchSize = 500;
     private const int ScopeStateConcurrencyAttemptLimit = 8;
+    private readonly DbContextOptions<NotificationsDbContext> maintenanceOptions = options;
+
+    // Module-owned background maintenance spans scopes. Keep it separate from
+    // the caller's tenant and change tracker; its algorithms still register
+    // each scope mutation and fence closed scopes in the same transaction.
+    internal NotificationsDbContext CreateMaintenanceContext() =>
+        new(this.maintenanceOptions, MaintenanceScopeContext.Instance);
 
     public DbSet<UserNotification> UserNotifications => this.Set<UserNotification>();
     public DbSet<UserNotificationTag> UserNotificationTags => this.Set<UserNotificationTag>();
@@ -53,6 +60,9 @@ public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbConte
         modelBuilder.HasDefaultSchema(NotificationsMigrations.Schema);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(NotificationsDbContext).Assembly);
         this.ApplyScopeConventions(modelBuilder);
+        modelBuilder.Entity<NotificationBroadcastRead>()
+            .Property(read => read.RecipientScope)
+            .UseOrdinalStringComparison(this);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -430,5 +440,13 @@ public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbConte
         }
 
         return normalizedScopeId;
+    }
+
+    private sealed class MaintenanceScopeContext : IScopeContext
+    {
+        public static MaintenanceScopeContext Instance { get; } = new();
+
+        public bool IsEnabled => false;
+        public string? ScopeId => null;
     }
 }
