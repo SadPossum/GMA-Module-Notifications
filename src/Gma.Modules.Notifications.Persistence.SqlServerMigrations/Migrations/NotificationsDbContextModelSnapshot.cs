@@ -18,7 +18,7 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("notifications")
-                .HasAnnotation("ProductVersion", "10.0.8")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
@@ -491,7 +491,8 @@ namespace Gma.Modules.Notifications.Persistence.SqlServerMigrations.Migrations
                     b.Property<string>("RecipientScope")
                         .IsRequired()
                         .HasMaxLength(135)
-                        .HasColumnType("nvarchar(135)");
+                        .HasColumnType("nvarchar(135)")
+                        .UseCollation("Latin1_General_100_BIN2");
 
                     b.HasKey("Id");
 

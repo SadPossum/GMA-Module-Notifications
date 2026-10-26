@@ -57,7 +57,9 @@ internal sealed class NotificationRetentionService(
     internal async Task CleanupAsync(CancellationToken cancellationToken)
     {
         using IServiceScope scope = scopeFactory.CreateScope();
-        NotificationsDbContext dbContext = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
+        await using NotificationsDbContext dbContext = scope.ServiceProvider
+            .GetRequiredService<NotificationsDbContext>()
+            .CreateMaintenanceContext();
         NotificationRetentionOptions settings = options.Value;
         DateTimeOffset nowUtc = clock.UtcNow;
         DateTimeOffset readBefore = nowUtc.AddDays(-settings.ReadHistoryDays);

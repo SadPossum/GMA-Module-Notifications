@@ -40,22 +40,23 @@ internal sealed class NotificationsInboxStore(
         }
 
         ArgumentOutOfRangeException.ThrowIfLessThan(maxMessages, 1);
+        await using NotificationsDbContext maintenance =
+            this.DbContext.CreateMaintenanceContext();
         await using IDbContextTransaction? transaction =
-            this.DbContext.Database.IsRelational() &&
-            this.DbContext.Database.CurrentTransaction is null
-                ? await this.DbContext.Database.BeginTransactionAsync(
+            maintenance.Database.IsRelational()
+                ? await maintenance.Database.BeginTransactionAsync(
                         IsolationLevel.Serializable,
                         cancellationToken)
                     .ConfigureAwait(false)
                 : null;
-        IQueryable<InboxMessage> candidates = this.DbContext.InboxMessages
+        IQueryable<InboxMessage> candidates = maintenance.InboxMessages
             .Where(message =>
                 message.Status == InboxMessageStatus.Processed &&
                 message.ProcessedAtUtc != null &&
                 message.ProcessedAtUtc < processedBeforeUtc)
             .Where(message =>
                 message.ScopeId == null ||
-                !this.DbContext.NotificationScopeStates
+                !maintenance.NotificationScopeStates
                     .IgnoreQueryFilters()
                     .Any(state =>
                         state.ScopeId == message.ScopeId &&
@@ -73,7 +74,7 @@ internal sealed class NotificationsInboxStore(
             .ConfigureAwait(false);
         if (scopeIds.Length > 0)
         {
-            if (!await this.DbContext
+            if (!await maintenance
                     .TryRegisterMaintenanceScopeMutationsAsync(
                         scopeIds,
                         cancellationToken).ConfigureAwait(false))
@@ -81,7 +82,7 @@ internal sealed class NotificationsInboxStore(
                 throw new NotificationScopeClosedException();
             }
 
-            await this.DbContext.SaveChangesAsync(cancellationToken)
+            await maintenance.SaveChangesAsync(cancellationToken)
                 .ConfigureAwait(false);
         }
 

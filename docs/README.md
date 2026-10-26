@@ -274,6 +274,23 @@ The `notifications` schema owns:
 
 SQL Server and PostgreSQL have provider-specific migrations. The V2 migration backfills legacy notification rows with `delivery:web` and `respect-preferences`, preserving existing inbox behavior. Run the selected provider migrations before enabling the module.
 
+Module-wide journal cleanup and the optional history-retention worker use a
+fresh, module-owned context with the configured database options. That context
+does not inherit a host's default tenant or save its caller's tracked changes.
+Normal request and inbox-processing contexts retain their scope restrictions.
+Maintenance still registers each affected scope mutation and keeps the
+serializable transaction, closed-scope fences and bounded batches. Journal
+cleanup removes only processed rows strictly older than its cutoff; pending,
+processing, failed, recent and closed-scope rows remain protected.
+
+SQL Server's `MakeBroadcastRecipientScopesOrdinal` migration makes the encoded
+recipient scope use the same ordinal comparison as scope-state keys. This
+also keeps case-distinct scopes separate in receipt indexes and avoids mixed
+collations in retention joins. Existing receipts are preserved. Downgrading to
+a case-insensitive collation requires reconciling any case-only key collisions
+first; do not resolve those by deleting another scope's receipts. PostgreSQL's
+schema is unchanged.
+
 Retention is disabled until the product chooses policy. When enabled, cleanup
 is bounded, includes old attempt rows according to
 `Notifications:Delivery:AttemptRetentionDays`, and advances every affected
