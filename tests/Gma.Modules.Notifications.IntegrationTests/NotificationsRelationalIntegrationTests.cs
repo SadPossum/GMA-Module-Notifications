@@ -2,6 +2,7 @@ namespace Gma.Modules.Notifications.IntegrationTests;
 
 using System.Data;
 using Gma.Framework.AccessControl;
+using Gma.Framework.Cqrs.UnitOfWork;
 using Gma.Framework.Messaging;
 using Gma.Framework.Messaging.Infrastructure;
 using Gma.Framework.Notifications;
@@ -1688,6 +1689,7 @@ public sealed partial class NotificationsRelationalIntegrationTests
     {
         ServiceCollection services = new();
         services.AddMetrics();
+        services.AddScoped<IUnitOfWork, NotificationsUnitOfWork>();
         services.AddSingleton<IScopeContext>(new TestScopeContext(scopeId));
         services.AddDbContext<NotificationsDbContext>(options => options.UseNpgsql(
             connectionString,
@@ -1699,6 +1701,7 @@ public sealed partial class NotificationsRelationalIntegrationTests
     {
         ServiceCollection services = new();
         services.AddMetrics();
+        services.AddScoped<IUnitOfWork, NotificationsUnitOfWork>();
         services.AddSingleton<IScopeContext>(new TestScopeContext(scopeId));
         services.AddDbContext<NotificationsDbContext>(options => options.UseSqlServer(
             connectionString,

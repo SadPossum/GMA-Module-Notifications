@@ -77,8 +77,10 @@ public sealed partial class NotificationsRelationalIntegrationTests
         await using (NotificationsDbContext before = MaintenanceTestContext(provider, "tenant-a"))
         {
             string[] migrations = before.Database.GetMigrations().ToArray();
-            Assert.EndsWith("MakeBroadcastRecipientScopesOrdinal", migrations[^1]);
-            await before.GetService<IMigrator>().MigrateAsync(migrations[^2]);
+            int ordinalIndex = Array.FindIndex(migrations,
+                migration => migration.EndsWith("MakeBroadcastRecipientScopesOrdinal", StringComparison.Ordinal));
+            Assert.True(ordinalIndex > 0);
+            await before.GetService<IMigrator>().MigrateAsync(migrations[ordinalIndex - 1]);
             before.NotificationBroadcasts.Add(NotificationBroadcast.Create(
                 StableId(350), null,
                 Gma.Modules.Notifications.Domain.ValueObjects.NotificationBroadcastAudience.PlatformUsers,
