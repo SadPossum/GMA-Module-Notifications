@@ -183,6 +183,18 @@ data. Global broadcasts remain outside tenant scope lifecycle. The state is a
 module-local consistency boundary, not a framework tenant registry or a public
 administration API.
 
+Transactional read commands keep provider-native read markers and the scope
+revision in the same module-owned relational transaction. Cancellation or a
+concurrent scope close rolls back both. An enclosing caller-owned transaction
+remains under that caller's control. Bulk history reads update only the scopes
+admitted for that operation, in batches of at most 500 scopes; a scope that
+appears after admission remains unread until the next operation.
+
+Cross-scope delivery workers use the existing private maintenance context for
+claiming and completion, as retention and journal maintenance already do. This
+keeps the request's active scope, pending changes and query filters intact;
+the module still checks each mutated scope and refuses closed-scope delivery.
+
 `INotificationScopeLifecycle` is a Contracts capability that exposes a
 read-only, in-process scope snapshot and typed export pages for product
 composition. Pages use stable keyset cursors,

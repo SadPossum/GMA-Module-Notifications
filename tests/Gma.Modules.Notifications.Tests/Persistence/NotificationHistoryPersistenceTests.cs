@@ -3,6 +3,7 @@ namespace Gma.Modules.Notifications.Tests;
 using Gma.Framework.AccessControl;
 using Gma.Framework.Cqrs;
 using Gma.Framework.Cqrs.Infrastructure;
+using Gma.Framework.Cqrs.UnitOfWork;
 using Gma.Framework.Notifications;
 using Gma.Framework.Notifications.Infrastructure;
 using Gma.Framework.Results;
@@ -39,6 +40,17 @@ using FrameworkNotificationSeverity = Framework.Notifications.NotificationSeveri
 public sealed class NotificationHistoryPersistenceTests
 {
     private static readonly DateTimeOffset Now = new(2026, 7, 4, 12, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public void Persistence_registers_a_transactional_notifications_unit_of_work()
+    {
+        using IHost host = BuildHost(enabled: false, scopeId: "tenant-a");
+        using IServiceScope scope = host.Services.CreateScope();
+        IUnitOfWork unitOfWork = Assert.Single(
+            scope.ServiceProvider.GetServices<IUnitOfWork>(),
+            candidate => string.Equals(candidate.ModuleName, NotificationsModuleMetadata.Name, StringComparison.Ordinal));
+        Assert.IsType<ITransactionalUnitOfWork>(unitOfWork, exactMatch: false);
+    }
 
     [Fact]
     public async Task Publisher_persists_history_when_live_notifications_are_disabled()
