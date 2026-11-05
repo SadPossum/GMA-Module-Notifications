@@ -2,6 +2,7 @@ namespace Gma.Modules.Notifications.Persistence;
 
 using Gma.Framework.Cqrs.UnitOfWork;
 using Gma.Framework.Messaging;
+using Gma.Framework.ModuleComposition;
 using Gma.Framework.Notifications;
 using Gma.Framework.Persistence.EntityFrameworkCore;
 using Gma.Modules.Notifications.Application;
@@ -79,6 +80,8 @@ public static class DependencyInjection
             .Get<NotificationDeliveryOptions>() ?? new();
         if (deliveryOptions.Enabled)
         {
+            builder.ProvideFeature(NotificationsRuntimeFeatures.CrossScopeDeliveryClaimsProvided(
+                "Gma.Modules.Notifications.Persistence/NotificationDeliveryService"));
             builder.Services.TryAddEnumerable(
                 ServiceDescriptor.Singleton<IHostedService, NotificationDeliveryService>());
         }
